@@ -32,7 +32,9 @@ option(ETHERNAUTA_JUCE_FETCH "Download pinned JUCE ${ETHERNAUTA_JUCE_VERSION} wh
 if(ETHERNAUTA_BUILD_PLUGIN)
   if(EXISTS "${ETHERNAUTA_JUCE_DIR}/CMakeLists.txt")
     set(_ethernauta_juce_src "${ETHERNAUTA_JUCE_DIR}")
-    message(STATUS "Ethernauta: using local JUCE at '${ETHERNAUTA_JUCE_DIR}'")
+    message(WARNING "Ethernauta: using local JUCE at '${ETHERNAUTA_JUCE_DIR}', which bypasses the pinned "
+      "JUCE ${ETHERNAUTA_JUCE_VERSION} (${ETHERNAUTA_JUCE_SHA}) and is not verified against it. "
+      "Point -DETHERNAUTA_JUCE_DIR at a checkout that does not exist to use the pinned download.")
   elseif(ETHERNAUTA_JUCE_FETCH)
     message(STATUS "Ethernauta: no JUCE at '${ETHERNAUTA_JUCE_DIR}'; fetching JUCE ${ETHERNAUTA_JUCE_VERSION} "
       "(${ETHERNAUTA_JUCE_SHA}). On failure set -DETHERNAUTA_JUCE_DIR=<JUCE checkout> "
@@ -58,6 +60,9 @@ if(ETHERNAUTA_BUILD_PLUGIN)
   enable_language(C) # JUCE's CMake requires the C language to be enabled
   add_subdirectory("${_ethernauta_juce_src}" "${CMAKE_BINARY_DIR}/juce" EXCLUDE_FROM_ALL)
   add_subdirectory(Source/plugin EXCLUDE_FROM_ALL)
+  # Plugin-layer Catch2 tests; build with `--target ethernauta_plugin_tests`, then run ctest.
+  add_subdirectory(tests/plugin EXCLUDE_FROM_ALL)
+  add_custom_target(ethernauta_plugin_tests DEPENDS EthernautaPluginTests)
   # Not part of `all`. Also makes the excluded plugin targets visible to Visual Studio solutions,
   # which otherwise drop them and break `cmake --build --target EthernautaPlugin_VST3`.
   add_custom_target(ethernauta_plugin DEPENDS EthernautaPlugin_VST3 EthernautaPlugin_Standalone)

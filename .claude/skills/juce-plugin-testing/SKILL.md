@@ -36,3 +36,21 @@ Apply when setting up, writing, or running tests for this JUCE plugin: unit test
 ## Output Contract
 Before reporting testing work done, confirm: new DSP/parameters have unit tests, state round-trip is covered, any regenerative path has a bounded-output stability test, pluginval has been run against the built plugin binary.
 
+
+## Status
+
+Which rules are met in this repo today (update when it changes).
+
+| Rule | State |
+|---|---|
+| DSP unit tests for the core (Catch2) | Satisfied: oscillator, smoother, gate, voice, master stage |
+| Multiple block sizes (1, 7, 512, 4096) and sample rates (44100/48000/96000) | Satisfied in core and plugin tests; block-size output is bit-identical |
+| Silent-state tests (idle voice, release to exact silence, no latched voice) | Satisfied |
+| Parameter state round-trip for every parameter of every voice | Satisfied (`tests/plugin`, opt-in `ETHERNAUTA_BUILD_PLUGIN=ON`) |
+| Malformed/foreign state, stable parameter IDs, layout defaults/ranges | Satisfied (`tests/plugin`) |
+| Output bounded with six voices at full gain | Satisfied (core and plugin tests) |
+| Feedback-stability test | Not applicable yet: no regenerative path exists |
+| Relative CPU budget (real-time factor, Release build) | Pending: no test written |
+| pluginval strictness 10 on the VST3 | Run manually before release only; not automated in CI |
+| pluginval on the Standalone target | Not applicable (pluginval validates plugin formats, not the Standalone app) |
+| Plugin-layer tests in CI | Informational job only (JUCE build on CI is not a blocking gate) |

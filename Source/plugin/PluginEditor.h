@@ -16,12 +16,12 @@ public:
     void resized() override;
 
 private:
+    static constexpr int kNumPanels = ethernauta::plugin::kNumVoices;
     static constexpr int kPanelWidth = 150;
     static constexpr int kPanelHeight = 420;
-    static constexpr int kPanelSlots = ethernauta::plugin::kMaxVoices; // layout designed for 6
-    static constexpr int kVisiblePanels = ethernauta::plugin::kNumVoices; // shown today
+    static constexpr int kMargin = 10;
 
-    std::array<std::unique_ptr<VoicePanel>, kPanelSlots> panels_;
+    std::array<std::unique_ptr<VoicePanel>, kNumPanels> panels_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EthernautaEditor)
 };

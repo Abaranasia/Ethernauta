@@ -2,6 +2,8 @@
 
 #include "PluginEditor.h"
 
+#include <ethernauta/MasterStage.h>
+
 #include <cmath>
 
 namespace {
@@ -14,7 +16,7 @@ EthernautaAudioProcessor::EthernautaAudioProcessor()
 {
     using ethernauta::plugin::parameterId;
     using ethernauta::plugin::VoiceParam;
-    for (int i = 0; i < kNumVoices; ++i) {
+    for (int i = 0; i < ethernauta::plugin::kNumVoices; ++i) {
         auto& p = params_[static_cast<std::size_t>(i)];
         p.wave = apvts_.getRawParameterValue(parameterId(i, VoiceParam::Wave));
         p.latch = apvts_.getRawParameterValue(parameterId(i, VoiceParam::Latch));
@@ -59,6 +61,8 @@ void EthernautaAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, ju
         voices_[i].setParams(vp);
         voices_[i].process(left, numSamples);
     }
+    // Headroom safeguard for the additive mix of all voices (see MasterStage.h).
+    ethernauta::applyMasterStage(left, numSamples);
     for (int ch = 1; ch < numChannels; ++ch)
         buffer.copyFrom(ch, 0, buffer, 0, 0, numSamples);
 }

@@ -27,7 +27,8 @@ add_executable(ethernauta_tests
   test_oscillator.cpp
   test_param_smoother.cpp
   test_latch_gate.cpp
-  test_drone_voice.cpp)
+  test_drone_voice.cpp
+  test_master_stage.cpp)
 target_include_directories(ethernauta_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(ethernauta_tests PRIVATE ethernauta_core Catch2::Catch2WithMain)
 ethernauta_set_warnings(ethernauta_tests)

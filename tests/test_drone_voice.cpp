@@ -6,6 +6,7 @@
 
 #include "TestUtils.h"
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstring>
@@ -252,6 +253,156 @@ TEST_CASE("Changing waveform while sounding stays finite and bounded", "[voice]"
         const auto out = testutil::render(v, 777, 777);
         REQUIRE(testutil::allFinite(out));
         REQUIRE(testutil::peak(out) <= 1.25f);
+    }
+}
+
+TEST_CASE("Waveform switch while sounding does not click, for every pair", "[voice][clicks][crossfade]")
+{
+    const double sr = 48000.0;
+    for (const auto from : kAll)
+        for (const auto to : kAll) {
+            if (from == to) continue;
+            for (const float note : {45.0f, 69.0f}) {
+                auto v = makeVoice(sr, loud(from, true, note));
+                auto out = testutil::render(v, 24000, 64);
+                const float steadyFrom = testutil::maxStep(out, 12000);
+                const std::size_t switchAt = out.size();
+                v.setWaveform(to);
+                const auto after = testutil::render(v, 12000, 64);
+                out.insert(out.end(), after.begin(), after.end());
+                const float steadyTo = testutil::maxStep(out, switchAt + 6000);
+                // The transition may not add a step beyond the steepest edge of either waveform.
+                const float bound = std::max(steadyFrom, steadyTo) * 1.1f + 0.02f;
+                INFO(ethernauta::waveformName(from) << " -> " << ethernauta::waveformName(to) << " note " << note);
+                CHECK(testutil::maxStep(out, switchAt) <= bound);
+                CHECK(testutil::peak(out) <= 1.25f);
+            }
+        }
+}
+
+TEST_CASE("Rapid waveform switching stays continuous and bounded", "[voice][clicks][crossfade]")
+{
+    float steepest = 0.0f; // steepest per-sample step any waveform has on its own
+    for (const auto w : kAll) {
+        auto ref = makeVoice(48000.0, loud(w, true));
+        steepest = std::max(steepest, testutil::maxStep(testutil::render(ref, 24000, 64), 12000));
+    }
+    auto v = makeVoice(48000.0, loud(Waveform::Sine, true));
+    auto out = testutil::render(v, 24000, 64);
+    for (int i = 0; i < 400; ++i) { // far faster than the crossfade length
+        v.setWaveform(kAll[(i * 3 + 1) % 4]);
+        const auto chunk = testutil::render(v, 37, 37);
+        out.insert(out.end(), chunk.begin(), chunk.end());
+    }
+    CHECK(testutil::allFinite(out));
+    CHECK(testutil::peak(out) <= 1.25f);
+    CHECK(testutil::maxStep(out, 24000) <= steepest * 1.1f + 0.02f);
+}
+
+TEST_CASE("Output does not depend on the block size across a waveform switch", "[voice][determinism][crossfade]")
+{
+    const int segment = 7 * 4096;
+    for (const auto to : {Waveform::Saw, Waveform::Square, Waveform::Triangle}) {
+        std::array<std::vector<float>, 4> results;
+        const int blocks[] = {1, 7, 512, 4096};
+        for (std::size_t b = 0; b < 4; ++b) {
+            auto v = makeVoice(48000.0, loud(Waveform::Sine, true));
+            auto out = testutil::render(v, segment, blocks[b]);
+            v.setWaveform(to);
+            const auto tail = testutil::render(v, segment, blocks[b]);
+            out.insert(out.end(), tail.begin(), tail.end());
+            results[b] = std::move(out);
+        }
+        for (std::size_t b = 1; b < 4; ++b)
+            REQUIRE(std::memcmp(results[b].data(), results[0].data(), results[0].size() * sizeof(float)) == 0);
+    }
+}
+
+TEST_CASE("Waveform switch while idle leaves no artifact", "[voice][crossfade]")
+{
+    for (const auto from : kAll)
+        for (const auto to : kAll) {
+            auto v = makeVoice(48000.0, loud(from, false));
+            v.setWaveform(to);
+            REQUIRE(testutil::peak(testutil::render(v, 4800, 64)) == 0.0f);
+            v.setLatched(true);
+            const auto got = testutil::render(v, 9600, 64);
+            // Identical to a voice that always had the new waveform: no fade from the old one.
+            auto ref = makeVoice(48000.0, loud(to, true));
+            const auto want = testutil::render(ref, 9600, 64);
+            REQUIRE(std::memcmp(got.data(), want.data(), got.size() * sizeof(float)) == 0);
+        }
+}
+
+TEST_CASE("Gain changed while idle does not ramp on the next latch", "[voice][clicks]")
+{
+    for (const bool viaSetParams : {false, true}) {
+        auto v = makeVoice(48000.0, loud(Waveform::Sine, false)); // 0 dB target
+        v.setGainDb(-6.0f);                                       // changed while idle
+        if (viaSetParams) {
+            VoiceParams p = loud(Waveform::Sine, true);
+            p.gainDb = -20.0f;
+            v.setParams(p);
+        } else {
+            v.setGainDb(-20.0f);
+            v.setLatched(true);
+        }
+        const auto got = testutil::render(v, 4800, 64);
+
+        VoiceParams q = loud(Waveform::Sine, true);
+        q.gainDb = -20.0f;
+        DroneVoice ref; // settings stored before prepare(): the gain starts exactly at its target
+        ref.setParams(q);
+        ref.prepare(48000.0);
+        const auto want = testutil::render(ref, 4800, 64);
+        REQUIRE(std::memcmp(got.data(), want.data(), got.size() * sizeof(float)) == 0);
+    }
+}
+
+TEST_CASE("Gain changed after full release does not ramp on re-latch", "[voice][clicks]")
+{
+    auto v = makeVoice(48000.0, loud(Waveform::Sine, true));
+    testutil::render(v, 4800, 64);
+    v.setLatched(false);
+    testutil::render(v, 48000, 512); // fully released -> idle
+    REQUIRE_FALSE(v.isActive());
+    v.setGainDb(-30.0f);
+    v.setLatched(true);
+    const auto out = testutil::render(v, 480, 64);
+    // Envelope attack alone governs the level: -30 dB is x0.0316, so the peak can never exceed it.
+    CHECK(testutil::peak(out) <= 0.0317f * 1.1f);
+}
+
+TEST_CASE("Voices are independent: one voice's params never alter another's output", "[voice][independence]")
+{
+    auto renderVoice = [](const VoiceParams& p) {
+        auto v = makeVoice(48000.0, p);
+        return testutil::render(v, 9600, 128);
+    };
+    std::array<VoiceParams, 6> base;
+    for (std::size_t i = 0; i < base.size(); ++i)
+        base[i] = loud(kAll[i % 4], true, 40.0f + 4.0f * static_cast<float>(i));
+
+    for (std::size_t k = 0; k < base.size(); ++k) {
+        auto changed = base;
+        changed[k].waveform = kAll[(static_cast<std::size_t>(changed[k].waveform) + 1) % 4];
+        changed[k].gainDb = -20.0f;
+        changed[k].midiNote += 7.0f;
+        changed[k].latched = false;
+        for (std::size_t j = 0; j < base.size(); ++j) {
+            if (j == k) continue;
+            const auto a = renderVoice(base[j]);
+            // Same array of voices, mixed together, with voice k changed.
+            std::array<DroneVoice, 6> voices;
+            std::array<std::vector<float>, 6> bufs;
+            for (std::size_t n = 0; n < 6; ++n) {
+                voices[n].prepare(48000.0);
+                voices[n].setParams(changed[n]);
+                bufs[n].assign(9600, 0.0f);
+                for (int off = 0; off < 9600; off += 128) voices[n].process(bufs[n].data() + off, 128);
+            }
+            REQUIRE(std::memcmp(a.data(), bufs[j].data(), a.size() * sizeof(float)) == 0);
+        }
     }
 }
 
