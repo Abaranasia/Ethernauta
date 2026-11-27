@@ -129,15 +129,67 @@ TEST_CASE("Voices are independent: other voices' settings do not change a voice'
     }
 }
 
-TEST_CASE("Changing one latched voice's pitch leaves the others' parameters untouched", "[plugin][audio][independence]")
+// Per-voice wiring: each test latches ONLY voice i and changes only voice i's parameter, so the
+// rendered audio can only be right if voice i's own parameter drives voice i.
+
+TEST_CASE("Each voice's own pitch parameter sets its frequency", "[plugin][audio][wiring]")
 {
-    EthernautaAudioProcessor p;
-    for (int v = 0; v < ep::kNumVoices; ++v) latch(p, v);
-    setPlain(p, "v4_pitch", 70.0f);
-    for (int v = 0; v < ep::kNumVoices; ++v) {
-        if (v == 3) continue;
-        CHECK(raw(p, voiceId(v, "pitch")) == Catch::Approx(ep::defaultPitchNote(v)));
-        CHECK(raw(p, voiceId(v, "gain")) == Catch::Approx(-12.0f));
+    constexpr double sr = 48000.0;
+    for (int i = 0; i < ep::kNumVoices; ++i) {
+        // Notes 40, 42, ... 50 differ from every default pitch (45, 52, 57, 61, 64, 69) and each other.
+        const float note = 40.0f + 2.0f * static_cast<float>(i);
+        EthernautaAudioProcessor p;
+        setPlain(p, voiceId(i, "pitch"), note);
+        latch(p, i);
+        prepare(p, sr, 512);
+        const auto out = render(p, static_cast<int>(sr), 512);
+        const double hz = estimateFrequencyHz(out.left, sr, 4800);
+        INFO("voice " << i + 1 << " measured " << hz << " Hz");
+        // 0.5% << one semitone (5.9%): crossings are interpolated, so the estimate is much tighter.
+        CHECK(hz == Catch::Approx(midiNoteToHz(note)).epsilon(0.005));
+        for (int other = 0; other < ep::kNumVoices; ++other)
+            CHECK(std::fabs(hz - midiNoteToHz(ep::defaultPitchNote(other))) > 1.0);
+    }
+}
+
+TEST_CASE("Each voice's own gain parameter sets its level", "[plugin][audio][wiring]")
+{
+    constexpr double sr = 48000.0;
+    constexpr float quietDb = -24.0f, loudDb = -12.0f;
+    for (int i = 0; i < ep::kNumVoices; ++i) {
+        auto levelAt = [&](float gainDb) {
+            EthernautaAudioProcessor p;
+            setPlain(p, voiceId(i, "gain"), gainDb);
+            latch(p, i);
+            prepare(p, sr, 512);
+            return rms(render(p, static_cast<int>(sr), 512).left, 12000);
+        };
+        const double expected = std::pow(10.0, (loudDb - quietDb) / 20.0);
+        const double ratio = levelAt(loudDb) / levelAt(quietDb);
+        INFO("voice " << i + 1 << " ratio " << ratio << " expected " << expected);
+        // 2%: the master tanh compresses the louder render by ~0.5% at its peak (see MasterStage.h);
+        // both renders share pitch and window, so partial-cycle effects cancel in the ratio.
+        CHECK(ratio == Catch::Approx(expected).epsilon(0.02));
+    }
+}
+
+TEST_CASE("Each voice's own waveform parameter shapes its output", "[plugin][audio][wiring]")
+{
+    constexpr double sr = 48000.0;
+    for (int i = 0; i < ep::kNumVoices; ++i) {
+        auto crestFor = [&](float waveIndex) {
+            EthernautaAudioProcessor p;
+            setPlain(p, voiceId(i, "wave"), waveIndex);
+            latch(p, i);
+            prepare(p, sr, 512);
+            return crestFactor(render(p, static_cast<int>(sr), 512).left, 12000);
+        };
+        const double sine = crestFor(0.0f);
+        const double square = crestFor(2.0f);
+        INFO("voice " << i + 1 << " crest sine " << sine << " square " << square);
+        // Equal gain and pitch: only the shape differs. Sine ~1.41, square ~1.0 (ideal values).
+        CHECK(sine == Catch::Approx(1.414).epsilon(0.05));
+        CHECK(square < 1.15);
     }
 }
 

@@ -99,6 +99,19 @@ TEST_CASE("Default pitches are distinct and ascending", "[plugin][params]")
     for (int v = 1; v < ep::kNumVoices; ++v) CHECK(ep::defaultPitchNote(v) > ep::defaultPitchNote(v - 1));
 }
 
+TEST_CASE("Setting one voice's pitch changes only that voice's stored parameters", "[plugin][params][independence]")
+{
+    EthernautaAudioProcessor proc;
+    constexpr int changed = 3;
+    setPlain(proc, voiceId(changed, "pitch"), 70.0f);
+    CHECK(raw(proc, voiceId(changed, "pitch")) == Catch::Approx(70.0f));
+    for (int v = 0; v < ep::kNumVoices; ++v) {
+        if (v == changed) continue;
+        CHECK(raw(proc, voiceId(v, "pitch")) == Catch::Approx(ep::defaultPitchNote(v)));
+        CHECK(raw(proc, voiceId(v, "gain")) == Catch::Approx(ethernauta::VoiceParams{}.gainDb));
+    }
+}
+
 TEST_CASE("Editor can be created at a fixed size", "[plugin][editor]")
 {
     EthernautaAudioProcessor proc;

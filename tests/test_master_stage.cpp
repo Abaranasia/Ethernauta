@@ -69,6 +69,16 @@ TEST_CASE("Master stage keeps a default-level voice nearly untouched", "[master]
     auto dry = testutil::render(v, 24000, 512);
     auto wet = dry;
     ethernauta::applyMasterStage(wet.data(), static_cast<int>(wet.size()));
-    for (std::size_t i = 12000; i < dry.size(); ++i)
-        REQUIRE(wet[i] == Catch::Approx(dry[i] * ethernauta::kMasterTrim).margin(2e-3));
+    // tanh compresses most at the peak, so the relative deviation from the linear (trimmed) signal
+    // is largest there. Documented in MasterStage.h: ~0.5% (x^2/3 with x = 0.251 * 0.5).
+    constexpr std::size_t kSettled = 12000;
+    std::size_t peakIdx = kSettled;
+    for (std::size_t i = kSettled; i < dry.size(); ++i)
+        if (std::fabs(dry[i]) > std::fabs(dry[peakIdx])) peakIdx = i;
+    const double linear = static_cast<double>(dry[peakIdx]) * ethernauta::kMasterTrim;
+    const double relDeviation = std::fabs(linear - static_cast<double>(wet[peakIdx])) / std::fabs(linear);
+    INFO("peak " << dry[peakIdx] << " relative deviation " << relDeviation);
+    CHECK(std::fabs(dry[peakIdx]) == Catch::Approx(0.2512).epsilon(0.01)); // -12 dB
+    CHECK(relDeviation < 0.006); // measured 0.52%; the old "<0.2%" claim would fail here
+    CHECK(relDeviation > 0.004); // two-sided so the documented ~0.5% cannot silently drift
 }

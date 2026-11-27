@@ -92,6 +92,35 @@ inline double rms(const std::vector<float>& v, std::size_t from = 0)
     return v.size() > from ? std::sqrt(acc / static_cast<double>(v.size() - from)) : 0.0;
 }
 
+// Frequency from positive-going zero crossings with linear interpolation of each crossing time.
+// Sub-sample accurate, so the error is far below one semitone even for a low note in a short window.
+inline double estimateFrequencyHz(const std::vector<float>& v, double sampleRate, std::size_t from = 0)
+{
+    double first = 0.0, last = 0.0;
+    int crossings = 0;
+    for (std::size_t i = from + 1; i < v.size(); ++i) {
+        if (v[i - 1] < 0.0f && v[i] >= 0.0f) {
+            const double t = static_cast<double>(i - 1)
+                             + static_cast<double>(-v[i - 1]) / static_cast<double>(v[i] - v[i - 1]);
+            if (crossings++ == 0) first = t;
+            last = t;
+        }
+    }
+    return crossings < 2 ? 0.0 : (crossings - 1) * sampleRate / (last - first);
+}
+
+// Peak / RMS: ~1.414 for a sine, ~1.0 for a square.
+inline double crestFactor(const std::vector<float>& v, std::size_t from = 0)
+{
+    const double r = rms(v, from);
+    return r > 0.0 ? static_cast<double>(peak(v, from)) / r : 0.0;
+}
+
+inline double midiNoteToHz(double note)
+{
+    return 440.0 * std::pow(2.0, (note - 69.0) / 12.0);
+}
+
 inline bool allFinite(const std::vector<float>& v)
 {
     return std::all_of(v.begin(), v.end(), [](float x) { return std::isfinite(x); });
