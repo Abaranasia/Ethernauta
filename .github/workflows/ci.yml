@@ -34,6 +34,12 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ninja-build
 
+      - name: Cache fetched Catch2
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: build/_deps
+          key: ${{ runner.os }}-asan-catch2-${{ hashFiles('tests/CMakeLists.txt') }}
+
       - name: Configure
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Debug -DETHERNAUTA_BUILD_PLUGIN=OFF -DETHERNAUTA_SANITIZE=ON
 
@@ -50,6 +56,12 @@ jobs:
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
 
+      - name: Cache fetched Catch2
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: build/_deps
+          key: ${{ runner.os }}-debug-catch2-${{ hashFiles('tests/CMakeLists.txt') }}
+
       - name: Configure
         run: cmake -S . -B build -A x64 -DETHERNAUTA_BUILD_PLUGIN=OFF
 
@@ -61,6 +73,12 @@ jobs:
 
       # Release exercises optimised floating-point paths (block-size determinism is bit-exact).
       # A separate build directory keeps per-configuration test discovery from mixing.
+      - name: Cache fetched Catch2
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5.1.0
+        with:
+          path: build-release/_deps
+          key: ${{ runner.os }}-release-catch2-${{ hashFiles('tests/CMakeLists.txt') }}
+
       - name: Configure (Release)
         run: cmake -S . -B build-release -A x64 -DETHERNAUTA_BUILD_PLUGIN=OFF
 
@@ -87,5 +105,9 @@ jobs:
       - name: Configure
         run: cmake -S . -B build-plugin -A x64 -DETHERNAUTA_BUILD_PLUGIN=ON
 
-      - name: Build plugin
-        run: cmake --build build-plugin --config Debug --target ethernauta_plugin --parallel
+      - name: Build plugin and tests
+        run: cmake --build build-plugin --config Debug --target ALL_BUILD ethernauta_plugin ethernauta_plugin_tests --parallel
+
+      # Core tests plus the plugin-layer tests (state, parameters, audio, editor).
+      - name: Test
+        run: ctest --test-dir build-plugin -C Debug --output-on-failure

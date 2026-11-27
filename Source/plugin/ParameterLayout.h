@@ -5,11 +5,20 @@
 
 namespace ethernauta::plugin {
 
-// Number of drone voices the plugin currently instantiates. Raising this to 6 is the only change
-// the layout, processor and editor loops need.
-inline constexpr int kNumVoices = 1;
-// Number of panel slots the editor is designed for.
-inline constexpr int kMaxVoices = 6;
+// Number of independent drone voices: the single source of truth for the parameter layout, the
+// processor's voice array and the editor's panels.
+inline constexpr int kNumVoices = 6;
+
+// Default pitch (MIDI note) per voice: an open A-major stack above A2 (A2 E3 A3 C#4 E4 A4), so all
+// six voices latched together form a consonant chord. Voice 1 equals VoiceParams{}.midiNote (45).
+// Changing the entry of a shipped voice changes only its default, never its ID or range.
+inline constexpr float kDefaultPitchNotes[] = {45.0f, 52.0f, 57.0f, 61.0f, 64.0f, 69.0f};
+static_assert(sizeof(kDefaultPitchNotes) / sizeof(float) == kNumVoices, "one default pitch per voice");
+inline constexpr float defaultPitchNote(int voiceIndex) noexcept { return kDefaultPitchNotes[voiceIndex]; }
+
+// Gain parameter range (dB). The lower bound is the core's mute floor; the upper bound stays below
+// the core's own maximum.
+inline constexpr float kGainParamMaxDb = 6.0f;
 
 // Bump when the saved state layout changes, and add a migration branch in setStateInformation.
 inline constexpr int kStateSchemaVersion = 1;

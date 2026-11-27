@@ -22,27 +22,39 @@ void DroneVoice::reset() noexcept
 void DroneVoice::setParams(const VoiceParams& p) noexcept
 {
     setWaveform(p.waveform);
-    setLatched(p.latched);
     setGainDb(p.gainDb);
     setPitch(p.midiNote, p.cents);
+    setLatched(p.latched); // last: waveform and gain are already final when the gate opens
 }
 
 void DroneVoice::setWaveform(Waveform w) noexcept
 {
     params_.waveform = w;
-    osc_.setWaveform(w);
+    // Idle: nothing is audible, switch at once so the next latch starts on the new waveform.
+    // Sounding (or releasing): crossfade to avoid a click.
+    if (gate_.isIdle())
+        osc_.setWaveform(w);
+    else
+        osc_.crossfadeTo(w);
 }
 
 void DroneVoice::setLatched(bool latched) noexcept
 {
     params_.latched = latched;
+    // Opening from idle: the gain must not glide in from a stale value; the attack alone fades in.
+    if (latched && gate_.isIdle()) gain_.snapTo(gain_.target());
     gate_.setOpen(latched);
 }
 
 void DroneVoice::setGainDb(float db) noexcept
 {
     params_.gainDb = db;
-    gain_.setTarget(gainDbToLinear(db));
+    const float target = gainDbToLinear(db);
+    // While idle nothing is audible, so jump to the target instead of ramping toward it later.
+    if (gate_.isIdle())
+        gain_.snapTo(target);
+    else
+        gain_.setTarget(target);
 }
 
 void DroneVoice::setPitch(float midiNote, float cents) noexcept

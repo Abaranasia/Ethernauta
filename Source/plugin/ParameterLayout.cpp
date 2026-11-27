@@ -37,7 +37,7 @@ void addVoiceParameters(juce::AudioProcessorValueTreeState::ParameterLayout& lay
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{parameterId(voiceIndex, VoiceParam::Gain), kParameterVersion},
         voiceName + " Gain",
-        juce::NormalisableRange<float>(kMinGainDb, 6.0f, 0.1f, 1.6f), -12.0f,
+        juce::NormalisableRange<float>(kMinGainDb, kGainParamMaxDb, 0.1f, 1.6f), VoiceParams{}.gainDb,
         juce::AudioParameterFloatAttributes()
             .withLabel("dB")
             .withStringFromValueFunction([](float v, int) {
@@ -47,7 +47,7 @@ void addVoiceParameters(juce::AudioProcessorValueTreeState::ParameterLayout& lay
     layout.add(std::make_unique<juce::AudioParameterFloat>(
         juce::ParameterID{parameterId(voiceIndex, VoiceParam::Pitch), kParameterVersion},
         voiceName + " Pitch",
-        juce::NormalisableRange<float>(kPitchMinNote, kPitchMaxNote, 0.01f), VoiceParams{}.midiNote,
+        juce::NormalisableRange<float>(kPitchMinNote, kPitchMaxNote, 0.01f), defaultPitchNote(voiceIndex),
         juce::AudioParameterFloatAttributes()
             .withLabel("note")
             .withStringFromValueFunction([](float v, int) {

@@ -38,8 +38,6 @@ public:
     juce::AudioProcessorValueTreeState& getValueTreeState() noexcept { return apvts_; }
 
 private:
-    static constexpr int kNumVoices = ethernauta::plugin::kNumVoices;
-
     struct VoiceParamPointers {
         std::atomic<float>* wave = nullptr;
         std::atomic<float>* latch = nullptr;
@@ -48,8 +46,8 @@ private:
     };
 
     juce::AudioProcessorValueTreeState apvts_;
-    std::array<VoiceParamPointers, kNumVoices> params_{};
-    std::array<ethernauta::DroneVoice, kNumVoices> voices_;
+    std::array<VoiceParamPointers, ethernauta::plugin::kNumVoices> params_{};
+    std::array<ethernauta::DroneVoice, ethernauta::plugin::kNumVoices> voices_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EthernautaAudioProcessor)
 };
