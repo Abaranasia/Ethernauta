@@ -91,8 +91,10 @@ void TuningEngine::adoptPending() noexcept
 
 void TuningEngine::setRoot(double midiNote, double cents) noexcept
 {
-    const double note = std::isfinite(midiNote) ? midiNote : 45.0;
-    const double c = std::isfinite(cents) ? cents : 0.0;
+    // Clamp in double before narrowing: a finite double beyond the float range is undefined behaviour
+    // to cast. pitchToHz() applies the same documented limits afterwards.
+    const double note = std::isfinite(midiNote) ? clampTo<double>(midiNote, kMinMidiNote, kMaxMidiNote) : 45.0;
+    const double c = std::isfinite(cents) ? clampTo<double>(cents, -kMaxCents, kMaxCents) : 0.0;
     rootHz_ = pitchToHz(static_cast<float>(note), static_cast<float>(c));
 }
 

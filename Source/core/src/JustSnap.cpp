@@ -12,6 +12,12 @@ inline long long floorDiv(long long a, long long b) noexcept
 
 constexpr double kDuplicateEpsilon = 1.0e-9;
 
+// Finite but absurd cents would overflow the double -> long long conversions (undefined behaviour).
+inline double clampSnapCents(double cents) noexcept
+{
+    return cents < -kMaxSnapCents ? -kMaxSnapCents : (cents > kMaxSnapCents ? kMaxSnapCents : cents);
+}
+
 } // namespace
 
 void SnapCandidates::setJustScale() noexcept
@@ -58,6 +64,7 @@ double SnapCandidates::keyRatio(long long key) const noexcept
 
 long long SnapCandidates::nearestKey(double cents) const noexcept
 {
+    cents = clampSnapCents(cents);
     const long long n = size_;
     const long long base = static_cast<long long>(std::floor(cents / 1200.0)) * n;
     // base - 1 is T.back() - 1200 and base + n is T.front() + 1200: the wraparound candidates.
@@ -76,6 +83,7 @@ long long SnapCandidates::nearestKey(double cents) const noexcept
 long long selectSnapKey(const SnapCandidates& candidates, SnapState& state, double cents,
                         double hysteresisCents) noexcept
 {
+    cents = clampSnapCents(cents);
     const double hysteresis = hysteresisCents > 0.0 ? hysteresisCents : 0.0; // also catches NaN
     long long key = candidates.nearestKey(cents);
     if (state.valid && key != state.key) {
@@ -92,6 +100,7 @@ double snapCents(const SnapCandidates& candidates, SnapState& state, double cent
                  double hysteresisCents) noexcept
 {
     if (candidates.size() == 0 || !std::isfinite(cents)) return cents;
+    cents = clampSnapCents(cents);
     const long long key = selectSnapKey(candidates, state, cents, hysteresisCents);
     const double s = strength > 0.0 ? (strength < 1.0 ? strength : 1.0) : 0.0;
     if (s <= 0.0) return cents;

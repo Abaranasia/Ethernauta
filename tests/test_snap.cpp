@@ -543,3 +543,65 @@ TEST_CASE("Engine: concurrent publishing never exposes a torn candidate set", "[
     CHECK(published > 0);
     for (int s = 0; s < kSets; ++s) CHECK(seen[s]);
 }
+
+TEST_CASE("snapCents treats huge finite cents as one clamped value instead of overflowing", "[snap][guard]")
+{
+    const auto c = justScale();
+    const double huge[] = {1.0e300, 1.0e200, std::numeric_limits<double>::max()};
+    for (const double sign : {1.0, -1.0}) {
+        et::SnapState ref;
+        const double expected = et::snapCents(c, ref, sign * huge[0], 1.0, 3.0);
+        CHECK(std::isfinite(expected));
+        for (const double h : huge) {
+            et::SnapState s;
+            const double r = et::snapCents(c, s, sign * h, 1.0, 3.0);
+            CHECK(r == expected);
+        }
+        // The clamped result still lies on the candidate grid (octave-folded).
+        const double folded = et::foldCents(expected);
+        bool onGrid = false;
+        for (int i = 0; i < c.size(); ++i)
+            if (std::fabs(folded - et::foldCents(c.keyCents(i))) < 1.0e-3) onGrid = true;
+        CHECK(onGrid);
+    }
+}
+
+TEST_CASE("nearestKey and selectSnapKey survive huge finite cents", "[snap][guard]")
+{
+    const auto c = justScale();
+    for (const double v : {1.0e300, -1.0e300, std::numeric_limits<double>::max(), -std::numeric_limits<double>::max()}) {
+        const long long k = c.nearestKey(v);
+        CHECK(std::isfinite(c.keyCents(k)));
+        et::SnapState s;
+        const long long k2 = et::selectSnapKey(c, s, v, 3.0);
+        CHECK(k2 == k);
+    }
+}
+
+TEST_CASE("setRoot with huge finite values clamps like the documented range", "[snap][guard]")
+{
+    et::TuningEngine hi, hiRef, lo, loRef;
+    hi.setRoot(1.0e300, 1.0e300);
+    hiRef.setRoot(1.0e6, 1.0e6);
+    lo.setRoot(-1.0e300, -1.0e300);
+    loRef.setRoot(-1.0e6, -1.0e6);
+    CHECK(std::isfinite(hi.rootHz()));
+    CHECK(hi.rootHz() == hiRef.rootHz());
+    CHECK(std::isfinite(lo.rootHz()));
+    CHECK(lo.rootHz() > 0.0);
+    CHECK(lo.rootHz() == loRef.rootHz());
+}
+
+TEST_CASE("huge cents behave exactly like the documented bound", "[snap][guard]")
+{
+    const auto c = justScale();
+    for (const double sign : {1.0, -1.0}) {
+        et::SnapState bound;
+        const double atBound = et::snapCents(c, bound, sign * et::kMaxSnapCents, 1.0, 3.0);
+        for (const double h : {1.0e300, std::numeric_limits<double>::max()}) {
+            et::SnapState s;
+            CHECK(et::snapCents(c, s, sign * h, 1.0, 3.0) == atBound);
+        }
+        CHECK(c.nearestKey(sign * 1.0e300) == c.nearestKey(sign * et::kMaxSnapCents));
+    }
+}
