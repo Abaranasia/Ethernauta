@@ -51,7 +51,7 @@ default 45 = A2 = 110 Hz). Each voice picks a mode (`v{n}_tuning`):
 - `v{n}_octave` is an integer -3..+3 added to the tuned result.
 - Snapping uses 3 cents of hysteresis: a voice leaves its grid point only when another is more than 3 cents closer, so jitter at a midpoint cannot flap it. A root change re-snaps Free-pitch voices on the new grid; Degree voices keep exact ratios to the root and transpose with it.
 - Frequency changes glide: while a voice sounds, its frequency moves to the new target with a one-pole of 80 ms in the log (cents) domain, so retuning does not click. An idle voice jumps straight to its target. The glide also applies to the plain pitch knob. It advances per sample, so rendering stays bit-identical for any block size.
-- The pitch dial stays enabled in every mode (it is the value to tune in 12-TET and Just); only Degree ignores it.
+- The pitch dial stays enabled in every mode (it is the value to tune in 12-TET and Just); only Degree and Choir ignore it.
 - State schema 2 added these parameters; state saved by schema 1 loads with the tuning parameters at their defaults.
 - Out of scope for this slice: root cents, voice linking, modulation, roughness model.
 
