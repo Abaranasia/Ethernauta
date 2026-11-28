@@ -250,7 +250,6 @@ TEST_CASE("Engine: Just mode strength 1 matches an independent reference of the 
             et::VoiceTuning t = justTuning(1.0, et::kDefaultSnapHysteresisCents, oct);
 
             // (1) memoryless sweep: one fresh voice per probe (voice index cycles, memory reset in between).
-            RefJust fresh;
             for (double c = -1250.0; c < 2500.0; c += 13.7) {
                 e.reset();
                 RefJust r;
