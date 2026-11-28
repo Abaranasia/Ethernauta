@@ -1,5 +1,6 @@
 #include "ParameterLayout.h"
 
+#include <ethernauta/Choir.h>
 #include <ethernauta/JustSnap.h>
 #include <ethernauta/TuningEngine.h>
 #include <ethernauta/VoiceParams.h>
@@ -85,7 +86,7 @@ void addVoiceTuningParameters(juce::AudioProcessorValueTreeState::ParameterLayou
     // Tuning: Free keeps the pitch parameter as it is (the default, so old behaviour is unchanged).
     layout.add(std::make_unique<juce::AudioParameterChoice>(
         juce::ParameterID{parameterId(voiceIndex, VoiceParam::Tuning), kTuningParameterVersion},
-        voiceName + " Tuning", juce::StringArray{"Free", "12-TET", "Just", "Degree"}, 0));
+        voiceName + " Tuning", juce::StringArray{"Free", "12-TET", "Just", "Degree", "Choir"}, 0));
 
     juce::StringArray degrees;
     for (int i = 0; i < kNumJustDegrees; ++i) {
@@ -123,6 +124,18 @@ void addSnapParameters(juce::AudioProcessorValueTreeState::ParameterLayout& layo
             [](float v, int) { return juce::String(v, 1); })));
 }
 
+void addChoirParameters(juce::AudioProcessorValueTreeState::ParameterLayout& layout)
+{
+    const juce::StringArray chords{"Major", "Minor", "Septimal Minor", "Supermajor"};
+    jassert(chords.size() == kNumChoirChords);
+    layout.add(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID{kChoir1ChordParamId, kChoirParameterVersion}, "Choir 1 Chord", chords,
+        static_cast<int>(ChoirChord::Major)));
+    layout.add(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID{kChoir2ChordParamId, kChoirParameterVersion}, "Choir 2 Chord", chords,
+        static_cast<int>(ChoirChord::Major)));
+}
+
 juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
 {
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
@@ -133,6 +146,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
         addVoiceTuningParameters(layout, voice);
     addGlobalParameters(layout);
     addSnapParameters(layout);
+    addChoirParameters(layout);
     return layout;
 }
 

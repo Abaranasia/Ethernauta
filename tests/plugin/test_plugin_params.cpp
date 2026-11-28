@@ -40,6 +40,9 @@ TEST_CASE("Parameter order is append-only so index-based host automation survive
     // Then the snap controls (appended after the globals so no earlier index moves).
     for (int v = 0; v < ep::kNumVoices; ++v) expected.push_back(voiceId(v, "snap"));
     expected.push_back(ep::kSnapHysteresisParamId);
+    // Then the choir chords (appended after the snap controls).
+    expected.push_back("choir1_chord");
+    expected.push_back("choir2_chord");
     REQUIRE(expected.size() == static_cast<std::size_t>(ep::kTotalParams));
 
     for (int i = 0; i < params.size(); ++i) {
@@ -79,6 +82,8 @@ TEST_CASE("Every voice has its stable parameter IDs", "[plugin][params]")
     }
     CHECK(std::string(ep::kRootParamId) == "root");
     CHECK(std::string(ep::kSnapHysteresisParamId) == "snap_hysteresis");
+    CHECK(std::string(ep::kChoir1ChordParamId) == "choir1_chord");
+    CHECK(std::string(ep::kChoir2ChordParamId) == "choir2_chord");
 }
 
 TEST_CASE("Tuning parameters expose the documented ranges and defaults", "[plugin][params][tuning]")
@@ -96,13 +101,14 @@ TEST_CASE("Tuning parameters expose the documented ranges and defaults", "[plugi
     for (int v = 0; v < ep::kNumVoices; ++v) {
         INFO("voice " << v + 1);
         const auto& tuning = param(proc, voiceId(v, "tuning"));
-        CHECK(tuning.getNumSteps() == 4);
+        CHECK(tuning.getNumSteps() == 5);
         CHECK(tuning.convertFrom0to1(tuning.getDefaultValue()) == 0.0f); // Free
         CHECK(raw(proc, voiceId(v, "tuning")) == 0.0f);
         CHECK(tuning.getText(tuning.convertTo0to1(0.0f), 32) == "Free");
         CHECK(tuning.getText(tuning.convertTo0to1(1.0f), 32) == "12-TET");
         CHECK(tuning.getText(tuning.convertTo0to1(2.0f), 32) == "Just");
         CHECK(tuning.getText(tuning.convertTo0to1(3.0f), 32) == "Degree");
+        CHECK(tuning.getText(tuning.convertTo0to1(4.0f), 32) == "Choir"); // appended: 0..3 keep their meaning
 
         const auto& degree = param(proc, voiceId(v, "degree"));
         CHECK(degree.getNumSteps() == ethernauta::kNumJustDegrees);
@@ -143,8 +149,8 @@ TEST_CASE("Existing parameters keep their IDs at their original indices", "[plug
 TEST_CASE("Snap parameters expose the documented ranges and defaults", "[plugin][params][snap]")
 {
     EthernautaAudioProcessor proc;
-    CHECK(ep::kTotalParams == 50);
-    CHECK(proc.getParameters().size() == 50);
+    CHECK(ep::kTotalParams == 52); // 50 before the choir chords
+    CHECK(proc.getParameters().size() == 52);
 
     for (int v = 0; v < ep::kNumVoices; ++v) {
         INFO("voice " << v + 1);
@@ -164,6 +170,24 @@ TEST_CASE("Snap parameters expose the documented ranges and defaults", "[plugin]
           == Catch::Approx(static_cast<float>(ethernauta::kDefaultSnapHysteresisCents)));
     CHECK(raw(proc, "snap_hysteresis") == Catch::Approx(3.0f));
     CHECK(hyst.getLabel() == "cents");
+}
+
+TEST_CASE("Choir chord parameters expose the documented choices and defaults", "[plugin][params][choir]")
+{
+    EthernautaAudioProcessor proc;
+    const char* const expectedNames[4] = {"Major", "Minor", "Septimal Minor", "Supermajor"};
+    for (const char* id : {"choir1_chord", "choir2_chord"}) {
+        INFO(id);
+        const auto& chord = param(proc, id);
+        CHECK(chord.getNumSteps() == 4);
+        CHECK(chord.convertFrom0to1(chord.getDefaultValue()) == 0.0f); // Major
+        CHECK(raw(proc, id) == 0.0f);
+        for (int i = 0; i < 4; ++i)
+            CHECK(chord.getText(chord.convertTo0to1(static_cast<float>(i)), 32) == expectedNames[i]);
+    }
+    // Voices 1-3 read choir 1, voices 4-6 choir 2.
+    for (int v = 0; v < ep::kNumVoices; ++v)
+        CHECK(std::string(ep::choirChordParamId(v)) == (v < 3 ? "choir1_chord" : "choir2_chord"));
 }
 
 TEST_CASE("Voice 1 parameters keep their shipped ranges and defaults", "[plugin][params]")
@@ -248,4 +272,15 @@ TEST_CASE("Editor can be created at a fixed size", "[plugin][editor]")
     for (auto* child : editor->getChildren())
         if (dynamic_cast<VoicePanel*>(child) != nullptr) ++panels;
     CHECK(panels == ep::kNumVoices);
+    // Two chord selectors (Choir 1, Choir 2), inside the editor and clear of every voice panel.
+    int combos = 0;
+    for (auto* child : editor->getChildren()) {
+        if (dynamic_cast<juce::ComboBox*>(child) == nullptr) continue;
+        ++combos;
+        for (auto* other : editor->getChildren())
+            if (dynamic_cast<VoicePanel*>(other) != nullptr)
+                CHECK_FALSE(child->getBounds().intersects(other->getBounds()));
+        CHECK(editor->getLocalBounds().contains(child->getBounds()));
+    }
+    CHECK(combos == ep::kNumChoirs);
 }

@@ -23,7 +23,8 @@ inline constexpr float kGainParamMaxDb = 6.0f;
 // Bump when the saved state layout changes, and add a migration branch in setStateInformation.
 // 1: four parameters per voice. 2: tuning engine (global "root", per-voice tuning/degree/octave).
 // 3: snap controls (per-voice "snap" strength, global "snap_hysteresis").
-inline constexpr int kStateSchemaVersion = 3;
+// 4: choir tuning (extra "Choir" tuning choice, global "choir1_chord" and "choir2_chord").
+inline constexpr int kStateSchemaVersion = 4;
 
 // Version hint attached to every parameter. Parameter IDs are stable strings and must never change
 // once shipped (hosts store automation against them).
@@ -31,19 +32,20 @@ inline constexpr int kParameterVersion = 1;
 // Parameters added after the first release carry a higher hint (used by AU hosts).
 inline constexpr int kTuningParameterVersion = 2;
 inline constexpr int kSnapParameterVersion = 3;
+inline constexpr int kChoirParameterVersion = 4;
 
 enum class VoiceParam { Wave, Latch, Gain, Pitch, Tuning, Degree, Octave, Snap };
 
 // Parameter counts. Host automation may address parameters by index, so the layout order is
 // append-only: [wave, latch, gain, pitch] for voices 1..N (the original layout), then
 // [tuning, degree, octave] for voices 1..N, then the global [root], then [snap] for voices 1..N and
-// the global [snap_hysteresis]. New parameters go at the end, never in between, and existing ones
+// the global [snap_hysteresis], then the globals [choir1_chord, choir2_chord]. New parameters go at the end, never in between, and existing ones
 // are never reordered.
 inline constexpr int kNumBaseVoiceParams = 4;   // wave, latch, gain, pitch
 inline constexpr int kNumTuningVoiceParams = 3; // tuning, degree, octave
 inline constexpr int kNumSnapVoiceParams = 1;   // snap
 inline constexpr int kNumVoiceParams = kNumBaseVoiceParams + kNumTuningVoiceParams + kNumSnapVoiceParams;
-inline constexpr int kNumGlobalParams = 2;      // root, snap_hysteresis
+inline constexpr int kNumGlobalParams = 4;      // root, snap_hysteresis, choir1_chord, choir2_chord
 inline constexpr int kTotalParams = kNumVoices * kNumVoiceParams + kNumGlobalParams;
 
 // Stable parameter ID for a zero-based voice index: "v1_wave", "v1_latch", "v1_gain", "v1_pitch",
@@ -59,6 +61,19 @@ inline constexpr float kRootDefaultNote = 45.0f; // A2 = 110 Hz
 inline constexpr const char* kSnapHysteresisParamId = "snap_hysteresis";
 inline constexpr float kSnapHysteresisMaxCents = 50.0f;
 
+// Choir chord per choir (a choir is three voices tuned as a triad from the shared root; voices 1-3
+// read choir 1, voices 4-6 choir 2). Choices follow ethernauta::ChoirChord, default Major. A voice
+// follows its choir's chord only while its tuning is set to Choir (the last "v{n}_tuning" choice).
+inline constexpr const char* kChoir1ChordParamId = "choir1_chord";
+inline constexpr const char* kChoir2ChordParamId = "choir2_chord";
+inline constexpr int kNumChoirs = 2;
+static_assert(kNumVoices == kNumChoirs * 3, "each choir has three voices (ethernauta::kChoirSize)");
+// Parameter ID of the chord that governs a zero-based voice index.
+inline constexpr const char* choirChordParamId(int voiceIndex) noexcept
+{
+    return voiceIndex < 3 ? kChoir1ChordParamId : kChoir2ChordParamId;
+}
+
 // UI/automation range of the pitch parameter (MIDI notes); the core accepts a wider range.
 inline constexpr float kPitchMinNote = 12.0f;
 inline constexpr float kPitchMaxNote = 96.0f;
@@ -69,6 +84,9 @@ void addGlobalParameters(juce::AudioProcessorValueTreeState::ParameterLayout& la
 // Appends the snap parameters (one strength per voice, then the global hysteresis). They come after
 // the tuning globals so no earlier parameter index moves.
 void addSnapParameters(juce::AudioProcessorValueTreeState::ParameterLayout& layout);
+
+// Appends the two choir chord parameters (after the snap parameters, so no earlier index moves).
+void addChoirParameters(juce::AudioProcessorValueTreeState::ParameterLayout& layout);
 
 // Appends the original four parameters of one voice (wave, latch, gain, pitch).
 void addVoiceBaseParameters(juce::AudioProcessorValueTreeState::ParameterLayout& layout, int voiceIndex);

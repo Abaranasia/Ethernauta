@@ -30,6 +30,8 @@ EthernautaAudioProcessor::EthernautaAudioProcessor()
     }
     root_ = apvts_.getRawParameterValue(ethernauta::plugin::kRootParamId);
     snapHysteresis_ = apvts_.getRawParameterValue(ethernauta::plugin::kSnapHysteresisParamId);
+    choirChord_[0] = apvts_.getRawParameterValue(ethernauta::plugin::kChoir1ChordParamId);
+    choirChord_[1] = apvts_.getRawParameterValue(ethernauta::plugin::kChoir2ChordParamId);
     apvts_.state.setProperty(kSchemaVersionKey, ethernauta::plugin::kStateSchemaVersion, nullptr);
 }
 
@@ -70,6 +72,10 @@ void EthernautaAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, ju
         vt.octave = static_cast<int>(std::lround(p.octave->load(std::memory_order_relaxed)));
         vt.snapStrength = static_cast<double>(p.snap->load(std::memory_order_relaxed));
         vt.snapHysteresisCents = snapHysteresis;
+        // Voices 1-3 follow choir 1, voices 4-6 choir 2 (only used in Choir mode).
+        vt.choirChord = static_cast<ethernauta::ChoirChord>(
+            std::clamp(static_cast<int>(std::lround(choirChord_[i / ethernauta::kChoirSize]->load(std::memory_order_relaxed))),
+                       0, ethernauta::kNumChoirChords - 1));
         const double freeHz = ethernauta::pitchToHz(p.pitch->load(std::memory_order_relaxed), 0.0f);
 
         auto& voice = voices_[i];
@@ -113,6 +119,8 @@ void EthernautaAudioProcessor::setStateInformation(const void* data, int sizeInB
     // Schema 3 added the snap controls: an older preset has none, so they take their defaults
     // (full snap, default hysteresis), which is exactly the behaviour before they existed.
     if (savedVersion < 3) resetSnapParametersToDefaults();
+    // Schema 4 added choir tuning: an older preset has no chords (Major, the default, applies).
+    if (savedVersion < 4) resetChoirParametersToDefaults();
     apvts_.state.setProperty(kSchemaVersionKey, ethernauta::plugin::kStateSchemaVersion, nullptr);
 }
 
@@ -138,6 +146,12 @@ void EthernautaAudioProcessor::resetSnapParametersToDefaults()
     };
     reset(ethernauta::plugin::kSnapHysteresisParamId);
     for (int i = 0; i < ethernauta::plugin::kNumVoices; ++i) reset(parameterId(i, VoiceParam::Snap));
+}
+
+void EthernautaAudioProcessor::resetChoirParametersToDefaults()
+{
+    for (const char* id : {ethernauta::plugin::kChoir1ChordParamId, ethernauta::plugin::kChoir2ChordParamId})
+        if (auto* p = apvts_.getParameter(id)) p->setValueNotifyingHost(p->getDefaultValue());
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()

@@ -1,4 +1,5 @@
 #pragma once
+#include <ethernauta/Choir.h>
 #include <ethernauta/JustSnap.h>
 #include <ethernauta/Tuning.h>
 
@@ -7,8 +8,8 @@
 namespace ethernauta {
 
 // Order matches the plugin's "v{n}_tuning" choice indices; do not reorder.
-enum class TuningMode { Free = 0, EqualTempered = 1, Just = 2, Degree = 3 };
-inline constexpr int kNumTuningModes = 4;
+enum class TuningMode { Free = 0, EqualTempered = 1, Just = 2, Degree = 3, Choir = 4 };
+inline constexpr int kNumTuningModes = 5;
 
 inline constexpr int kMinOctaveOffset = -3;
 inline constexpr int kMaxOctaveOffset = 3;
@@ -22,6 +23,8 @@ struct VoiceTuning {
     double snapStrength = 1.0;
     // Just mode only. A voice leaves its grid point only once another is closer by more than this.
     double snapHysteresisCents = kDefaultSnapHysteresisCents;
+    // Choir mode only: the triad this voice is a member of (see Choir.h).
+    ChoirChord choirChord = ChoirChord::Major;
 };
 
 // Computes each voice's target frequency from ONE shared root, never neighbour to neighbour, so
@@ -33,6 +36,8 @@ struct VoiceTuning {
 //   Just           nearest snap candidate (default: the octave-reduced just scale) relative to the
 //                  root, octave kept, pulled with snapStrength; see JustSnap.h
 //   Degree         root * ratio(degree) * 2^octave; ignores the voice's own frequency
+//   Choir          root * choirRatio(chord, voice % kChoirSize) * 2^octave (a triad member, see
+//                  Choir.h); ignores the voice's own frequency
 //
 // Snapping has hysteresis: a voice leaves its current grid point only once another point is more than
 // the hysteresis closer (kHysteresisCents for 12-TET; VoiceTuning::snapHysteresisCents for Just),

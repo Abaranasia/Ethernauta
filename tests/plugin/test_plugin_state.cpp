@@ -40,6 +40,9 @@ TEST_CASE("State round-trips every parameter of every voice", "[plugin][state]")
     setPlain(a, "root", 52.0f);
     for (int v = 0; v < ep::kNumVoices; ++v) setPlain(a, voiceId(v, "snap"), 0.1f * static_cast<float>(v));
     setPlain(a, "snap_hysteresis", 17.0f);
+    setPlain(a, "choir1_chord", 2.0f);
+    setPlain(a, "choir2_chord", 3.0f);
+    setPlain(a, voiceId(5, "tuning"), 4.0f); // the appended Choir mode round-trips too
     // The test must not pass vacuously: the non-default values really are in place.
     for (const auto& id : allExpectedIds(ep::kNumVoices)) {
         INFO(id);
@@ -133,14 +136,14 @@ TEST_CASE("State saved by schema 1 (before the tuning engine) loads with tuning 
         CHECK(raw(p, voiceId(v, "pitch")) == Catch::Approx(40.0f + static_cast<float>(v)));
     }
     CHECK(static_cast<int>(p.getValueTreeState().state.getProperty("schemaVersion", -1)) == ep::kStateSchemaVersion);
-    CHECK(ep::kStateSchemaVersion == 3);
+    CHECK(ep::kStateSchemaVersion == 4);
 
     // Re-saving writes the new schema.
     juce::MemoryBlock again;
     p.getStateInformation(again);
     const auto saved = juce::AudioProcessor::getXmlFromBinary(again.getData(), static_cast<int>(again.getSize()));
     REQUIRE(saved != nullptr);
-    CHECK(saved->getIntAttribute("schemaVersion", -1) == 3);
+    CHECK(saved->getIntAttribute("schemaVersion", -1) == 4);
 }
 
 TEST_CASE("State saved before the snap controls (schema 2) loads with snap defaults", "[plugin][state][migration]")
@@ -177,6 +180,47 @@ TEST_CASE("State saved before the snap controls (schema 2) loads with snap defau
         }
         CHECK(raw(*p, "snap_hysteresis") == Catch::Approx(3.0f));
         CHECK(raw(*p, "root") == Catch::Approx(50.0f));
+    }
+}
+
+TEST_CASE("State saved before choir tuning (schema 3) loads with choir defaults", "[plugin][state][migration]")
+{
+    // Build the XML exactly as schema 3 wrote it: version 3, snap controls present, no choir chords.
+    juce::XmlElement xml("EthernautaState");
+    xml.setAttribute("schemaVersion", 3);
+    auto add = [&xml](const std::string& id, double value) {
+        auto* e = xml.createNewChildElement("PARAM");
+        e->setAttribute("id", juce::String(id));
+        e->setAttribute("value", value);
+    };
+    for (int v = 0; v < ep::kNumVoices; ++v) {
+        add(voiceId(v, "gain"), -9.0 - v);
+        add(voiceId(v, "tuning"), 3.0); // Degree: an old index that must keep its meaning
+        add(voiceId(v, "snap"), 0.5);
+    }
+    add("root", 50.0);
+    add("snap_hysteresis", 12.0);
+    juce::MemoryBlock blob;
+    juce::AudioProcessor::copyXmlToBinary(xml, blob);
+
+    EthernautaAudioProcessor fresh;
+    EthernautaAudioProcessor used;
+    setPlain(used, "choir1_chord", 3.0f);
+    setPlain(used, "choir2_chord", 1.0f);
+
+    for (auto* p : {&fresh, &used}) {
+        p->setStateInformation(blob.getData(), static_cast<int>(blob.getSize()));
+        CHECK(raw(*p, "choir1_chord") == 0.0f);
+        CHECK(raw(*p, "choir2_chord") == 0.0f);
+        for (int v = 0; v < ep::kNumVoices; ++v) {
+            INFO("voice " << v + 1);
+            CHECK(raw(*p, voiceId(v, "tuning")) == 3.0f);
+            CHECK(raw(*p, voiceId(v, "snap")) == Catch::Approx(0.5f));
+            CHECK(raw(*p, voiceId(v, "gain")) == Catch::Approx(-9.0f - static_cast<float>(v)));
+        }
+        CHECK(raw(*p, "snap_hysteresis") == Catch::Approx(12.0f));
+        CHECK(raw(*p, "root") == Catch::Approx(50.0f));
+        CHECK(static_cast<int>(p->getValueTreeState().state.getProperty("schemaVersion", -1)) == 4);
     }
 }
 
