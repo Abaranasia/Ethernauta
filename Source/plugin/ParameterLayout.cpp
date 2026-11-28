@@ -126,14 +126,11 @@ void addSnapParameters(juce::AudioProcessorValueTreeState::ParameterLayout& layo
 
 void addChoirParameters(juce::AudioProcessorValueTreeState::ParameterLayout& layout)
 {
-    const juce::StringArray chords{"Major", "Minor", "Septimal Minor", "Supermajor"};
-    jassert(chords.size() == kNumChoirChords);
-    layout.add(std::make_unique<juce::AudioParameterChoice>(
-        juce::ParameterID{kChoir1ChordParamId, kChoirParameterVersion}, "Choir 1 Chord", chords,
-        static_cast<int>(ChoirChord::Major)));
-    layout.add(std::make_unique<juce::AudioParameterChoice>(
-        juce::ParameterID{kChoir2ChordParamId, kChoirParameterVersion}, "Choir 2 Chord", chords,
-        static_cast<int>(ChoirChord::Major)));
+    const juce::StringArray chords = choirChordNames();
+    for (int choir = 0; choir < kNumChoirs; ++choir)
+        layout.add(std::make_unique<juce::AudioParameterChoice>(
+            juce::ParameterID{kChoirChordParamIds[choir], kChoirParameterVersion},
+            "Choir " + juce::String(choir + 1) + " Chord", chords, static_cast<int>(ChoirChord::Major)));
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()

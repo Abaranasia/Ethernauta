@@ -30,8 +30,8 @@ EthernautaAudioProcessor::EthernautaAudioProcessor()
     }
     root_ = apvts_.getRawParameterValue(ethernauta::plugin::kRootParamId);
     snapHysteresis_ = apvts_.getRawParameterValue(ethernauta::plugin::kSnapHysteresisParamId);
-    choirChord_[0] = apvts_.getRawParameterValue(ethernauta::plugin::kChoir1ChordParamId);
-    choirChord_[1] = apvts_.getRawParameterValue(ethernauta::plugin::kChoir2ChordParamId);
+    for (int c = 0; c < ethernauta::plugin::kNumChoirs; ++c)
+        choirChord_[static_cast<std::size_t>(c)] = apvts_.getRawParameterValue(ethernauta::plugin::kChoirChordParamIds[c]);
     apvts_.state.setProperty(kSchemaVersionKey, ethernauta::plugin::kStateSchemaVersion, nullptr);
 }
 
@@ -150,7 +150,7 @@ void EthernautaAudioProcessor::resetSnapParametersToDefaults()
 
 void EthernautaAudioProcessor::resetChoirParametersToDefaults()
 {
-    for (const char* id : {ethernauta::plugin::kChoir1ChordParamId, ethernauta::plugin::kChoir2ChordParamId})
+    for (const char* id : ethernauta::plugin::kChoirChordParamIds)
         if (auto* p = apvts_.getParameter(id)) p->setValueNotifyingHost(p->getDefaultValue());
 }
 

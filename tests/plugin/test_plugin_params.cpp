@@ -185,9 +185,6 @@ TEST_CASE("Choir chord parameters expose the documented choices and defaults", "
         for (int i = 0; i < 4; ++i)
             CHECK(chord.getText(chord.convertTo0to1(static_cast<float>(i)), 32) == expectedNames[i]);
     }
-    // Voices 1-3 read choir 1, voices 4-6 choir 2.
-    for (int v = 0; v < ep::kNumVoices; ++v)
-        CHECK(std::string(ep::choirChordParamId(v)) == (v < 3 ? "choir1_chord" : "choir2_chord"));
 }
 
 TEST_CASE("Voice 1 parameters keep their shipped ranges and defaults", "[plugin][params]")

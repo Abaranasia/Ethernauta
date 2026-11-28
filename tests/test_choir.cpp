@@ -216,18 +216,39 @@ TEST_CASE("Choir mode does not disturb the other modes", "[choir][engine]")
     degree.choirChord = et::ChoirChord::Supermajor; // must be ignored outside Choir mode
     CHECK(e.targetHz(1, degree, 999.0) == Approx(root * 1.5).epsilon(1e-12));
 
-    et::VoiceTuning just;
-    just.mode = et::TuningMode::Just;
-    just.choirChord = et::ChoirChord::Minor;
-    // Alternate Choir and Just on the same voice: the snap memory must not leak across the switch.
-    const double fifthAbove = root * et::centsToRatio(700.0);
-    for (int i = 0; i < 3; ++i) {
-        CHECK(e.targetHz(2, choir(et::ChoirChord::Major), 1.0) == Approx(root * 1.5).epsilon(1e-12));
-        CHECK(e.targetHz(2, just, fifthAbove) == Approx(root * 1.5).epsilon(1e-12));
-    }
-
     et::VoiceTuning freeT;
     CHECK(e.targetHz(0, freeT, 432.1) == 432.1);
     (void)e.targetHz(0, choir(et::ChoirChord::Major), 432.1);
     CHECK(e.targetHz(0, freeT, 432.1) == 432.1);
+}
+
+TEST_CASE("Choir mode drops the Just snap memory: a stale key is not held across a Choir call", "[choir][engine]")
+{
+    et::TuningEngine e;
+    e.setRoot(45.0);
+    const double root = e.rootHz();
+
+    // Grid points written from first principles: 10/9 is 1200*log2(10/9) = 182.4037 cents and 9/8 is
+    // 1200*log2(9/8) = 203.9100 cents, so their midpoint is 193.1568 cents. Default hysteresis is 3 cents.
+    const double mid = 193.1568;
+    auto inputHz = [&](double cents) { return root * std::exp2(cents / 1200.0); };
+
+    et::VoiceTuning just;
+    just.mode = et::TuningMode::Just;
+    just.snapStrength = 1.0;
+    just.snapHysteresisCents = 3.0;
+
+    // Seed the voice's Just memory on 10/9 (1 cent below the midpoint, no prior state).
+    CHECK(e.targetHz(2, just, inputHz(mid - 1.0)) == Approx(root * 10.0 / 9.0).epsilon(1e-12));
+    // A Choir call on the same voice in between (its own pitch is ignored).
+    CHECK(e.targetHz(2, choir(et::ChoirChord::Major), 1.0) == Approx(root * 1.5).epsilon(1e-12));
+    // 1 cent above the midpoint: 9/8 is only 2 cents closer, inside the 3-cent hysteresis. A stale 10/9
+    // key would be kept; a fresh selection (the Choir call reset the memory) picks the nearest, 9/8.
+    CHECK(e.targetHz(2, just, inputHz(mid + 1.0)) == Approx(root * 9.0 / 8.0).epsilon(1e-12));
+
+    // Control: without a Choir call in between, the same input is held on 10/9 by hysteresis.
+    et::TuningEngine held;
+    held.setRoot(45.0);
+    (void)held.targetHz(2, just, inputHz(mid - 1.0));
+    CHECK(held.targetHz(2, just, inputHz(mid + 1.0)) == Approx(root * 10.0 / 9.0).epsilon(1e-12));
 }

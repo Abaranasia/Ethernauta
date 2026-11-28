@@ -1,4 +1,5 @@
 #pragma once
+#include <ethernauta/Choir.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include <string>
@@ -67,11 +68,19 @@ inline constexpr float kSnapHysteresisMaxCents = 50.0f;
 inline constexpr const char* kChoir1ChordParamId = "choir1_chord";
 inline constexpr const char* kChoir2ChordParamId = "choir2_chord";
 inline constexpr int kNumChoirs = 2;
-static_assert(kNumVoices == kNumChoirs * 3, "each choir has three voices (ethernauta::kChoirSize)");
-// Parameter ID of the chord that governs a zero-based voice index.
-inline constexpr const char* choirChordParamId(int voiceIndex) noexcept
+static_assert(kNumVoices == kNumChoirs * ethernauta::kChoirSize, "each choir has ethernauta::kChoirSize voices");
+// Chord parameter ID per choir; the choir of a zero-based voice index is voiceIndex / kChoirSize.
+inline constexpr const char* kChoirChordParamIds[kNumChoirs] = {kChoir1ChordParamId, kChoir2ChordParamId};
+
+// Display names of the chord choices, in ethernauta::ChoirChord order (shared by the parameter layout
+// and the editor's selectors).
+inline constexpr const char* kChoirChordNames[ethernauta::kNumChoirChords] = {"Major", "Minor", "Septimal Minor",
+                                                                              "Supermajor"};
+inline juce::StringArray choirChordNames()
 {
-    return voiceIndex < 3 ? kChoir1ChordParamId : kChoir2ChordParamId;
+    juce::StringArray names;
+    for (const char* n : kChoirChordNames) names.add(n);
+    return names;
 }
 
 // UI/automation range of the pitch parameter (MIDI notes); the core accepts a wider range.
