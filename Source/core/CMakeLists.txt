@@ -2,6 +2,7 @@ add_library(ethernauta_core STATIC
   src/Oscillator.cpp
   src/LatchGate.cpp
   src/DroneVoice.cpp
+  src/JustSnap.cpp
   src/TuningEngine.cpp)
 target_include_directories(ethernauta_core PUBLIC include)
 target_compile_features(ethernauta_core PUBLIC cxx_std_17)
