@@ -47,15 +47,19 @@ private:
         std::atomic<float>* tuning = nullptr;
         std::atomic<float>* degree = nullptr;
         std::atomic<float>* octave = nullptr;
+        std::atomic<float>* snap = nullptr;
     };
 
     // Presets saved before schema 2 know nothing about tuning: put those parameters at their defaults.
     void resetTuningParametersToDefaults();
+    // Likewise for the snap controls, unknown to presets saved before schema 3.
+    void resetSnapParametersToDefaults();
 
     juce::AudioProcessorValueTreeState apvts_;
     std::array<VoiceParamPointers, ethernauta::plugin::kNumVoices> params_{};
     std::array<ethernauta::DroneVoice, ethernauta::plugin::kNumVoices> voices_;
     std::atomic<float>* root_ = nullptr;
+    std::atomic<float>* snapHysteresis_ = nullptr;
     ethernauta::TuningEngine tuner_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EthernautaAudioProcessor)

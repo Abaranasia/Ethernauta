@@ -311,6 +311,66 @@ TEST_CASE("Just mode snaps the pitch parameter to the root's pure ratio", "[plug
     }
 }
 
+TEST_CASE("Each voice's snap parameter pulls its Just pitch toward the grid", "[plugin][audio][tuning][snap]")
+{
+    constexpr double sr = 48000.0;
+    const double root = midiNoteToHz(45.0);
+    for (int v = 0; v < ep::kNumVoices; ++v) {
+        // Pitch 49 is a 12-TET major third (400 cents): the pure 5/4 is 386 cents, so the two differ.
+        auto measure = [&](float strength) {
+            EthernautaAudioProcessor p;
+            setPlain(p, voiceId(v, "pitch"), 49.0f);
+            setPlain(p, voiceId(v, "tuning"), static_cast<float>(kJust));
+            setPlain(p, voiceId(v, "snap"), strength);
+            return measureVoice(p, v, sr);
+        };
+        const double off = measure(0.0f);
+        const double half = measure(0.5f);
+        const double full = measure(1.0f);
+        INFO("voice " << v + 1 << " off " << off << " half " << half << " full " << full);
+        CHECK(off == Catch::Approx(midiNoteToHz(49.0)).epsilon(1e-3));
+        CHECK(full == Catch::Approx(root * 1.25).epsilon(1e-3));
+        CHECK(half < off);
+        CHECK(half > full);
+    }
+}
+
+TEST_CASE("The default snap strength keeps the fully snapped Just behaviour", "[plugin][audio][tuning][snap]")
+{
+    constexpr double sr = 48000.0;
+    EthernautaAudioProcessor p;
+    setPlain(p, voiceId(0, "pitch"), 49.0f);
+    setPlain(p, voiceId(0, "tuning"), static_cast<float>(kJust));
+    CHECK(measureVoice(p, 0, sr) == Catch::Approx(midiNoteToHz(45.0) * 1.25).epsilon(1e-3));
+}
+
+TEST_CASE("Global snap hysteresis reaches every voice", "[plugin][audio][tuning][snap]")
+{
+    constexpr double sr = 48000.0;
+    const double root = midiNoteToHz(45.0);
+    for (int v = 0; v < ep::kNumVoices; ++v) {
+        // Settle on 5/4 (386 cents), then move to 416 cents: 9/7 (435) is nearer by only ~11 cents.
+        // Without hysteresis the voice moves to 9/7; with 20 cents it stays on 5/4.
+        auto settled = [&](float hysteresisCents) {
+            EthernautaAudioProcessor p;
+            setPlain(p, voiceId(v, "pitch"), 49.0f);
+            setPlain(p, voiceId(v, "tuning"), static_cast<float>(kJust));
+            latch(p, v);
+            prepare(p, sr, 512);
+            render(p, 24000, 512);
+            setPlain(p, "snap_hysteresis", hysteresisCents);
+            setPlain(p, voiceId(v, "pitch"), 49.16f);
+            const auto out = render(p, 48000, 512);
+            return estimateFrequencyHz(out.left, sr, 24000);
+        };
+        const double none = settled(0.0f);
+        const double wide = settled(20.0f);
+        INFO("voice " << v + 1 << " none " << none << " wide " << wide);
+        CHECK(none == Catch::Approx(root * 9.0 / 7.0).epsilon(1e-3));
+        CHECK(wide == Catch::Approx(root * 1.25).epsilon(1e-3));
+    }
+}
+
 TEST_CASE("Free mode ignores the root, degree and octave parameters", "[plugin][audio][tuning]")
 {
     auto renderWith = [](bool disturb) {

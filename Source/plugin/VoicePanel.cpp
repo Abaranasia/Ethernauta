@@ -42,6 +42,10 @@ VoicePanel::VoicePanel(juce::AudioProcessorValueTreeState& apvts, int voiceIndex
     octave_.setTextBoxStyle(juce::Slider::TextBoxRight, false, 36, 20);
     addAndMakeVisible(octave_);
     setupCaption(*this, octaveLabel_, "Oct");
+    snap_.setTextBoxStyle(juce::Slider::TextBoxRight, false, 48, 20);
+    snap_.setTextValueSuffix(" %");
+    addAndMakeVisible(snap_);
+    setupCaption(*this, snapLabel_, "Snap");
 
     gain_.setTextValueSuffix(" dB");
     addAndMakeVisible(gain_);
@@ -57,6 +61,7 @@ VoicePanel::VoicePanel(juce::AudioProcessorValueTreeState& apvts, int voiceIndex
     tuningAttachment_ = std::make_unique<ComboAttachment>(apvts, parameterId(voiceIndex, VoiceParam::Tuning), tuning_);
     degreeAttachment_ = std::make_unique<ComboAttachment>(apvts, parameterId(voiceIndex, VoiceParam::Degree), degree_);
     octaveAttachment_ = std::make_unique<SliderAttachment>(apvts, parameterId(voiceIndex, VoiceParam::Octave), octave_);
+    snapAttachment_ = std::make_unique<SliderAttachment>(apvts, parameterId(voiceIndex, VoiceParam::Snap), snap_);
 }
 
 void VoicePanel::paint(juce::Graphics& g)
@@ -82,6 +87,10 @@ void VoicePanel::resized()
     auto octaveRow = area.removeFromTop(24);
     octaveLabel_.setBounds(octaveRow.removeFromLeft(30));
     octave_.setBounds(octaveRow);
+    area.removeFromTop(4);
+    auto snapRow = area.removeFromTop(24);
+    snapLabel_.setBounds(snapRow.removeFromLeft(36));
+    snap_.setBounds(snapRow);
     area.removeFromTop(8);
 
     auto pitchArea = area.removeFromBottom(120);

@@ -38,6 +38,8 @@ TEST_CASE("State round-trips every parameter of every voice", "[plugin][state]")
         setPlain(a, voiceId(v, "octave"), static_cast<float>(v % 7 - 3 == 0 ? 2 : v % 7 - 3));
     }
     setPlain(a, "root", 52.0f);
+    for (int v = 0; v < ep::kNumVoices; ++v) setPlain(a, voiceId(v, "snap"), 0.1f * static_cast<float>(v));
+    setPlain(a, "snap_hysteresis", 17.0f);
     // The test must not pass vacuously: the non-default values really are in place.
     for (const auto& id : allExpectedIds(ep::kNumVoices)) {
         INFO(id);
@@ -131,14 +133,51 @@ TEST_CASE("State saved by schema 1 (before the tuning engine) loads with tuning 
         CHECK(raw(p, voiceId(v, "pitch")) == Catch::Approx(40.0f + static_cast<float>(v)));
     }
     CHECK(static_cast<int>(p.getValueTreeState().state.getProperty("schemaVersion", -1)) == ep::kStateSchemaVersion);
-    CHECK(ep::kStateSchemaVersion == 2);
+    CHECK(ep::kStateSchemaVersion == 3);
 
     // Re-saving writes the new schema.
     juce::MemoryBlock again;
     p.getStateInformation(again);
     const auto saved = juce::AudioProcessor::getXmlFromBinary(again.getData(), static_cast<int>(again.getSize()));
     REQUIRE(saved != nullptr);
-    CHECK(saved->getIntAttribute("schemaVersion", -1) == 2);
+    CHECK(saved->getIntAttribute("schemaVersion", -1) == 3);
+}
+
+TEST_CASE("State saved before the snap controls (schema 2) loads with snap defaults", "[plugin][state][migration]")
+{
+    // Build the XML exactly as schema 2 wrote it: version 2, no snap parameters at all.
+    juce::XmlElement xml("EthernautaState");
+    xml.setAttribute("schemaVersion", 2);
+    auto add = [&xml](const std::string& id, double value) {
+        auto* e = xml.createNewChildElement("PARAM");
+        e->setAttribute("id", juce::String(id));
+        e->setAttribute("value", value);
+    };
+    for (int v = 0; v < ep::kNumVoices; ++v) {
+        add(voiceId(v, "gain"), -9.0 - v);
+        add(voiceId(v, "tuning"), 2.0);
+    }
+    add("root", 50.0);
+    juce::MemoryBlock blob;
+    juce::AudioProcessor::copyXmlToBinary(xml, blob);
+
+    // A fresh instance (what a host creates) and one that already has non-default snap values.
+    EthernautaAudioProcessor fresh;
+    EthernautaAudioProcessor used;
+    for (int v = 0; v < ep::kNumVoices; ++v) setPlain(used, voiceId(v, "snap"), 0.25f);
+    setPlain(used, "snap_hysteresis", 20.0f);
+
+    for (auto* p : {&fresh, &used}) {
+        p->setStateInformation(blob.getData(), static_cast<int>(blob.getSize()));
+        for (int v = 0; v < ep::kNumVoices; ++v) {
+            INFO("voice " << v + 1);
+            CHECK(raw(*p, voiceId(v, "snap")) == Catch::Approx(1.0f));
+            CHECK(raw(*p, voiceId(v, "gain")) == Catch::Approx(-9.0f - static_cast<float>(v)));
+            CHECK(raw(*p, voiceId(v, "tuning")) == 2.0f);
+        }
+        CHECK(raw(*p, "snap_hysteresis") == Catch::Approx(3.0f));
+        CHECK(raw(*p, "root") == Catch::Approx(50.0f));
+    }
 }
 
 TEST_CASE("Empty, null and malformed state leaves defaults untouched", "[plugin][state]")

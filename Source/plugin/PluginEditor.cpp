@@ -12,6 +12,15 @@ EthernautaEditor::EthernautaEditor(EthernautaAudioProcessor& processor)
     rootAttachment_ = std::make_unique<SliderAttachment>(processor.getValueTreeState(),
                                                          ethernauta::plugin::kRootParamId, root_);
 
+    snapHysteresisLabel_.setText("Snap Hysteresis", juce::dontSendNotification);
+    snapHysteresisLabel_.setFont(juce::FontOptions(14.0f));
+    addAndMakeVisible(snapHysteresisLabel_);
+    snapHysteresis_.setTextBoxStyle(juce::Slider::TextBoxRight, false, 80, 24);
+    snapHysteresis_.setTextValueSuffix(" cents");
+    addAndMakeVisible(snapHysteresis_);
+    snapHysteresisAttachment_ = std::make_unique<SliderAttachment>(
+        processor.getValueTreeState(), ethernauta::plugin::kSnapHysteresisParamId, snapHysteresis_);
+
     for (int i = 0; i < kNumPanels; ++i) {
         panels_[static_cast<std::size_t>(i)] = std::make_unique<VoicePanel>(processor.getValueTreeState(), i);
         addAndMakeVisible(*panels_[static_cast<std::size_t>(i)]);
@@ -29,7 +38,9 @@ void EthernautaEditor::resized()
     auto area = getLocalBounds().reduced(kMargin);
     auto topBar = area.removeFromTop(kTopBarHeight);
     rootLabel_.setBounds(topBar.removeFromLeft(260));
-    root_.setBounds(topBar.removeFromLeft(420));
+    root_.setBounds(topBar.removeFromLeft(360));
+    snapHysteresisLabel_.setBounds(topBar.removeFromLeft(120));
+    snapHysteresis_.setBounds(topBar);
     for (int i = 0; i < kNumPanels; ++i)
         panels_[static_cast<std::size_t>(i)]->setBounds(area.removeFromLeft(kPanelWidth));
 }
