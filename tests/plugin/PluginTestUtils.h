@@ -43,6 +43,12 @@ inline std::vector<std::string> expectedSnapIds(int numVoices)
     return ids;
 }
 
+// Parameters added with choir tuning (state schema 4): one chord per choir, appended after the snap IDs.
+inline std::vector<std::string> expectedChoirIds()
+{
+    return {"choir1_chord", "choir2_chord"};
+}
+
 inline std::vector<std::string> allExpectedIds(int numVoices)
 {
     auto ids = expectedIds(numVoices);
@@ -50,6 +56,8 @@ inline std::vector<std::string> allExpectedIds(int numVoices)
     ids.insert(ids.end(), tuning.begin(), tuning.end());
     const auto snap = expectedSnapIds(numVoices);
     ids.insert(ids.end(), snap.begin(), snap.end());
+    const auto choir = expectedChoirIds();
+    ids.insert(ids.end(), choir.begin(), choir.end());
     return ids;
 }
 

@@ -146,6 +146,11 @@ double TuningEngine::targetHz(int voice, const VoiceTuning& tuning, double freeH
             mem.key = key;
             return keyHz(tuning.mode, key, octave, rootHz_);
         }
+        case TuningMode::Choir: {
+            // A triad member from the shared root; the voice's own pitch is ignored. No snap memory.
+            mem.mode = TuningMode::Choir;
+            return rootHz_ * choirRatio(tuning.choirChord, voice % kChoirSize) * std::exp2(static_cast<double>(octave));
+        }
         case TuningMode::Free:
             break;
     }

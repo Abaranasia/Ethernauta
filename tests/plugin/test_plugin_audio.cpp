@@ -407,3 +407,44 @@ TEST_CASE("Tuned output with a mid-render root change is identical for every blo
     REQUIRE(rms(results[0], 0) > 0.01);
     for (std::size_t i = 1; i < results.size(); ++i) REQUIRE(bitEqual(results[i], results[0]));
 }
+
+// ---- Choir tuning wiring ------------------------------------------------------------------------
+
+TEST_CASE("Choir mode plays a triad from the root in both groups, with each group's own chord",
+          "[plugin][audio][tuning][choir]")
+{
+    constexpr double sr = 48000.0;
+    constexpr int kChoirMode = 4;
+    // Frequency ratios [chord][member] written out literally (Major, Minor, Septimal Minor, Supermajor).
+    constexpr double kRatio[4][3] = {
+        {1.0, 5.0 / 4.0, 1.5}, {1.0, 6.0 / 5.0, 1.5}, {1.0, 7.0 / 6.0, 1.5}, {1.0, 9.0 / 7.0, 1.5}};
+    constexpr int kOctave[ep::kNumVoices] = {0, 0, 1, 0, 1, 0};
+    const int chordPairs[][2] = {{0, 1}, {2, 3}, {3, 0}};
+
+    for (const auto& pair : chordPairs) {
+        for (int v = 0; v < ep::kNumVoices; ++v) {
+            EthernautaAudioProcessor p;
+            setPlain(p, "root", 45.0f);
+            setPlain(p, ep::kChoir1ChordParamId, static_cast<float>(pair[0]));
+            setPlain(p, ep::kChoir2ChordParamId, static_cast<float>(pair[1]));
+            for (int w = 0; w < ep::kNumVoices; ++w) {
+                setPlain(p, voiceId(w, "tuning"), static_cast<float>(kChoirMode));
+                setPlain(p, voiceId(w, "octave"), static_cast<float>(kOctave[w]));
+                setPlain(p, voiceId(w, "pitch"), 80.0f); // must be ignored in Choir mode
+            }
+            const int chord = pair[v / 3];
+            const double expected = midiNoteToHz(45.0) * kRatio[chord][v % 3] * (kOctave[v] == 1 ? 2.0 : 1.0);
+            const double hz = measureVoice(p, v, sr);
+            INFO("chords " << pair[0] << "/" << pair[1] << " voice " << v + 1 << " measured " << hz);
+            CHECK(hz == Catch::Approx(expected).epsilon(1e-3));
+        }
+    }
+}
+
+TEST_CASE("A choir chord does not affect a voice that is not in Choir mode", "[plugin][audio][tuning][choir]")
+{
+    EthernautaAudioProcessor p;
+    setPlain(p, ep::kChoir1ChordParamId, 3.0f); // Supermajor, but voice 2 stays in Free mode
+    const double hz = measureVoice(p, 1, 48000.0);
+    CHECK(hz == Catch::Approx(midiNoteToHz(static_cast<double>(ep::defaultPitchNote(1)))).epsilon(1e-3));
+}
