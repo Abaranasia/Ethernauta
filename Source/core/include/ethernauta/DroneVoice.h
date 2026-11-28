@@ -12,6 +12,9 @@ namespace ethernauta {
 // is idle the frequency jumps there at once; while it sounds, the frequency glides to the target in
 // the log (cents) domain with a one-pole of kGlideSeconds, so retuning (root change, tuning mode
 // change, pitch knob) never clicks. The glide advances per sample, so block size does not matter.
+// Contract: an idle voice always sits at its target (a glide in flight when the gate goes idle
+// completes instantly), so a relatch starts there. setFrequencyHz() overrides params_.midiNote/cents,
+// which only take effect through setPitch()/setParams(): the two entry points to the frequency.
 //
 // Threading: configure and process from the same (audio) thread. Setters are cheap and
 // allocation-free, so they may be called every block with the latest parameter values.
@@ -58,6 +61,7 @@ private:
     static constexpr double kGainSmoothingSeconds = 0.02;
 
     void jumpToFrequency(double hz) noexcept;
+    void completeGlide() noexcept; // snap an in-flight glide to its target
 
     VoiceParams params_{};
     double targetHz_ = 110.0;

@@ -121,6 +121,64 @@ TEST_CASE("A retune while sounding never steps faster than the new pitch allows"
     CHECK(testutil::allFinite(out));
 }
 
+namespace {
+// Latch at 110 Hz, retune far away so the glide is still in flight when the release ends, then
+// unlatch and run until the gate is idle. Returns every sample rendered, in `block`-sized calls.
+std::vector<float> latchRetuneAndRelease(et::DroneVoice& v, double farHz, int block)
+{
+    v.setFrequencyHz(110.0);
+    v.setLatched(true);
+    auto all = testutil::render(v, 4800, block);
+    v.setFrequencyHz(farHz);
+    auto seg = testutil::render(v, 2400, block);
+    all.insert(all.end(), seg.begin(), seg.end());
+    v.setLatched(false);
+    constexpr int kMax = 48000 * 2;
+    int done = 0;
+    while (v.isActive() && done < kMax) {
+        const int n = std::min(block, kMax - done);
+        seg = testutil::render(v, n, block);
+        all.insert(all.end(), seg.begin(), seg.end());
+        done += n;
+    }
+    return all;
+}
+} // namespace
+
+TEST_CASE("A voice that goes idle mid-glide snaps to its target", "[voice][glide]")
+{
+    constexpr double sr = 48000.0;
+    constexpr double far = 1760.0;
+    auto v = makeSine(sr, false);
+    latchRetuneAndRelease(v, far, 64);
+    REQUIRE_FALSE(v.isActive());
+    CHECK(v.frequencyHz() == v.targetFrequencyHz());
+    CHECK(v.frequencyHz() == far);
+
+    v.setLatched(true); // no setFrequencyHz: must start at the target, not resume the glide
+    const auto out = testutil::render(v, 48000, 512);
+    const double hz = testutil::estimateFrequency(out, sr, 960);
+    INFO("measured " << hz);
+    CHECK(hz == Approx(far).epsilon(1e-3));
+}
+
+TEST_CASE("Idle snap after a mid-glide release is bit-identical for every block size", "[voice][glide][determinism]")
+{
+    std::vector<std::vector<float>> results;
+    for (const int block : {1, 512}) {
+        auto v = makeSine(48000.0, false);
+        auto all = latchRetuneAndRelease(v, 1760.0, block);
+        REQUIRE_FALSE(v.isActive());
+        all.resize(48000 * 3, 0.0f); // equal length: the idle tail is silent
+        v.setLatched(true);
+        const auto tail = testutil::render(v, 24000, block);
+        all.insert(all.end(), tail.begin(), tail.end());
+        results.push_back(std::move(all));
+    }
+    REQUIRE(testutil::rms(results[0], 48000 * 3) > 0.1);
+    REQUIRE(bitEqual(results[1], results[0]));
+}
+
 TEST_CASE("setPitch routes through the same glide", "[voice][glide]")
 {
     auto v = makeSine(48000.0, true);

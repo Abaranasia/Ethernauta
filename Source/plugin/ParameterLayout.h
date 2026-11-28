@@ -32,6 +32,16 @@ inline constexpr int kTuningParameterVersion = 2;
 
 enum class VoiceParam { Wave, Latch, Gain, Pitch, Tuning, Degree, Octave };
 
+// Parameter counts. Host automation may address parameters by index, so the layout order is
+// append-only: [wave, latch, gain, pitch] for voices 1..N (the original layout), then
+// [tuning, degree, octave] for voices 1..N, then the globals. New parameters go at the end, never
+// in between, and existing ones are never reordered.
+inline constexpr int kNumBaseVoiceParams = 4;   // wave, latch, gain, pitch
+inline constexpr int kNumTuningVoiceParams = 3; // tuning, degree, octave
+inline constexpr int kNumVoiceParams = kNumBaseVoiceParams + kNumTuningVoiceParams;
+inline constexpr int kNumGlobalParams = 1;      // root
+inline constexpr int kTotalParams = kNumVoices * kNumVoiceParams + kNumGlobalParams;
+
 // Stable parameter ID for a zero-based voice index: "v1_wave", "v1_latch", "v1_gain", "v1_pitch",
 // "v1_tuning", "v1_degree", "v1_octave", ...
 std::string parameterId(int voiceIndex, VoiceParam which);
@@ -47,9 +57,13 @@ inline constexpr float kPitchMaxNote = 96.0f;
 // Appends the global parameters (currently only the tuning root).
 void addGlobalParameters(juce::AudioProcessorValueTreeState::ParameterLayout& layout);
 
-// Appends the seven parameters of one voice. Called in a loop over voices by createParameterLayout().
-void addVoiceParameters(juce::AudioProcessorValueTreeState::ParameterLayout& layout, int voiceIndex);
+// Appends the original four parameters of one voice (wave, latch, gain, pitch).
+void addVoiceBaseParameters(juce::AudioProcessorValueTreeState::ParameterLayout& layout, int voiceIndex);
 
+// Appends the tuning parameters of one voice (tuning, degree, octave).
+void addVoiceTuningParameters(juce::AudioProcessorValueTreeState::ParameterLayout& layout, int voiceIndex);
+
+// Builds the layout in the append-only order documented at kNumBaseVoiceParams.
 juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
 
 } // namespace ethernauta::plugin

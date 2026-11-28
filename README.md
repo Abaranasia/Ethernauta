@@ -28,7 +28,7 @@ Design notes:
 - Gain is in dB; at or below -60 dB the voice is exactly muted. Pitch is a fractional MIDI note plus cents (default A2 = 110 Hz).
 - Block-size independent: any block split renders bit-identical audio.
 - Six voices: `kNumVoices` in `Source/plugin/ParameterLayout.h` is the single count used by the layout, processor and editor.
-- Parameter IDs are stable strings per voice: `v1_wave`, `v1_latch`, `v1_gain`, `v1_pitch`, `v1_tuning`, `v1_degree`, `v1_octave` ... `v6_*`, plus the global `root` (43 parameters). Defaults: sine, unlatched, -12 dB; pitches form an open A-major stack (A2 E3 A3 C#4 E4 A4); tuning Free.
+- Parameter IDs are stable strings per voice: `v1_wave`, `v1_latch`, `v1_gain`, `v1_pitch`, `v1_tuning`, `v1_degree`, `v1_octave` ... `v6_*`, plus the global `root` (43 parameters). Parameter order is append-only because hosts may automate by index: `v1..v6` wave/latch/gain/pitch first (the original layout), then `v1..v6` tuning/degree/octave, then `root`; new parameters are appended, never inserted. Defaults: sine, unlatched, -12 dB; pitches form an open A-major stack (A2 E3 A3 C#4 E4 A4); tuning Free.
 - Headroom: the summed voices pass through a fixed -6 dB trim and `tanh`, so six latched full-gain voices stay within [-1, 1]; silence stays exactly 0.
 - A waveform change while sounding crossfades over 5 ms (no click); while idle it switches instantly. A gain change while idle (or at latch) never ramps.
 

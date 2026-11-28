@@ -39,7 +39,7 @@ void addGlobalParameters(juce::AudioProcessorValueTreeState::ParameterLayout& la
             [](float v, int) { return noteText(v); })));
 }
 
-void addVoiceParameters(juce::AudioProcessorValueTreeState::ParameterLayout& layout, int voiceIndex)
+void addVoiceBaseParameters(juce::AudioProcessorValueTreeState::ParameterLayout& layout, int voiceIndex)
 {
     const juce::String voiceName = "Voice " + juce::String(voiceIndex + 1);
 
@@ -74,6 +74,11 @@ void addVoiceParameters(juce::AudioProcessorValueTreeState::ParameterLayout& lay
             .withStringFromValueFunction([](float v, int) {
                 return noteText(v);
             })));
+}
+
+void addVoiceTuningParameters(juce::AudioProcessorValueTreeState::ParameterLayout& layout, int voiceIndex)
+{
+    const juce::String voiceName = "Voice " + juce::String(voiceIndex + 1);
 
     // Tuning: Free keeps the pitch parameter as it is (the default, so old behaviour is unchanged).
     layout.add(std::make_unique<juce::AudioParameterChoice>(
@@ -97,9 +102,12 @@ void addVoiceParameters(juce::AudioProcessorValueTreeState::ParameterLayout& lay
 juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
 {
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
-    addGlobalParameters(layout);
+    // Append-only order (see ParameterLayout.h): hosts may automate by index.
     for (int voice = 0; voice < kNumVoices; ++voice)
-        addVoiceParameters(layout, voice);
+        addVoiceBaseParameters(layout, voice);
+    for (int voice = 0; voice < kNumVoices; ++voice)
+        addVoiceTuningParameters(layout, voice);
+    addGlobalParameters(layout);
     return layout;
 }
 

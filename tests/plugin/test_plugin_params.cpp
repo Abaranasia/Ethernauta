@@ -17,14 +17,40 @@ TEST_CASE("Plugin exposes six voices through one constant", "[plugin][params]")
 {
     CHECK(ep::kNumVoices == 6);
     EthernautaAudioProcessor proc;
-    CHECK(proc.getParameters().size() == ep::kNumVoices * 7 + 1);
+    CHECK(proc.getParameters().size() == ep::kTotalParams);
+}
+
+TEST_CASE("Parameter order is append-only so index-based host automation survives updates",
+          "[plugin][params][order]")
+{
+    EthernautaAudioProcessor proc;
+    const auto& params = proc.getParameters();
+    REQUIRE(params.size() == ep::kTotalParams);
+
+    std::vector<std::string> expected;
+    // Original layout (commit 27aa24c): wave, latch, gain, pitch for each voice in turn.
+    for (int v = 0; v < ep::kNumVoices; ++v)
+        for (const char* suffix : {"wave", "latch", "gain", "pitch"}) expected.push_back(voiceId(v, suffix));
+    REQUIRE(static_cast<int>(expected.size()) == ep::kNumVoices * ep::kNumBaseVoiceParams);
+    // Then the tuning parameters of every voice, then the globals.
+    for (int v = 0; v < ep::kNumVoices; ++v)
+        for (const char* suffix : {"tuning", "degree", "octave"}) expected.push_back(voiceId(v, suffix));
+    expected.push_back(ep::kRootParamId);
+    REQUIRE(expected.size() == static_cast<std::size_t>(ep::kTotalParams));
+
+    for (int i = 0; i < params.size(); ++i) {
+        const auto* withId = dynamic_cast<juce::HostedAudioProcessorParameter*>(params[i]);
+        REQUIRE(withId != nullptr);
+        INFO("index " << i);
+        CHECK(withId->getParameterID().toStdString() == expected[static_cast<std::size_t>(i)]);
+    }
 }
 
 TEST_CASE("Every voice has its stable parameter IDs", "[plugin][params]")
 {
     EthernautaAudioProcessor proc;
-    const auto ids = allExpectedIds(6);
-    REQUIRE(ids.size() == 6 * 7 + 1);
+    const auto ids = allExpectedIds(ep::kNumVoices);
+    REQUIRE(ids.size() == static_cast<std::size_t>(ep::kTotalParams));
     for (const auto& id : ids) {
         INFO(id);
         CHECK(proc.getValueTreeState().getParameter(id) != nullptr);
@@ -37,7 +63,7 @@ TEST_CASE("Every voice has its stable parameter IDs", "[plugin][params]")
         CHECK(expected.count(withId->getParameterID().toStdString()) == 1);
     }
     // The builder agrees with the literal contract.
-    for (int v = 0; v < 6; ++v) {
+    for (int v = 0; v < ep::kNumVoices; ++v) {
         CHECK(ep::parameterId(v, ep::VoiceParam::Wave) == voiceId(v, "wave"));
         CHECK(ep::parameterId(v, ep::VoiceParam::Latch) == voiceId(v, "latch"));
         CHECK(ep::parameterId(v, ep::VoiceParam::Gain) == voiceId(v, "gain"));

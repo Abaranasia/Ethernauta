@@ -316,6 +316,73 @@ TEST_CASE("Hysteresis memory is per voice and cleared on a mode change", "[tunin
     CHECK(e.targetHz(0, t, f) == Approx(e.rootHz() * 1.6).epsilon(1e-12));
 }
 
+TEST_CASE("12-TET hysteresis stops the target flapping around a semitone midpoint", "[tuning][engine][hysteresis]")
+{
+    constexpr double H = et::TuningEngine::kHysteresisCents;
+    constexpr double mid = 750.0; // halfway between semitone 7 and 8 above the root
+    et::TuningEngine e;
+    e.setRoot(45.0);
+    const auto t = tuning(et::TuningMode::EqualTempered);
+    const double lower = e.rootHz() * std::exp2(7.0 / 12.0);
+    const double upper = e.rootHz() * std::exp2(8.0 / 12.0);
+
+    REQUIRE(e.targetHz(0, t, above(e, mid - 20.0)) == Approx(lower).epsilon(1e-12));
+    const double jitter = 0.25 * H;
+    int changes = 0;
+    double last = lower;
+    for (int i = 0; i < 200; ++i) {
+        const double f = e.targetHz(0, t, above(e, mid + ((i % 2) ? jitter : -jitter)));
+        if (f != last) ++changes;
+        last = f;
+    }
+    CHECK(changes == 0);
+    // Just inside the band it still sticks; just outside (more than H closer) it moves.
+    CHECK(e.targetHz(0, t, above(e, mid + 0.45 * H)) == Approx(lower).epsilon(1e-12));
+    CHECK(e.targetHz(0, t, above(e, mid + 0.55 * H)) == Approx(upper).epsilon(1e-12));
+    // The same jitter now sticks to the upper point.
+    changes = 0;
+    last = upper;
+    for (int i = 0; i < 200; ++i) {
+        const double f = e.targetHz(0, t, above(e, mid + ((i % 2) ? jitter : -jitter)));
+        if (f != last) ++changes;
+        last = f;
+    }
+    CHECK(changes == 0);
+    CHECK(e.targetHz(0, t, above(e, mid - H)) == Approx(lower).epsilon(1e-12));
+}
+
+TEST_CASE("12-TET with no memory picks the nearest semitone", "[tuning][engine][hysteresis]")
+{
+    constexpr double H = et::TuningEngine::kHysteresisCents;
+    et::TuningEngine e;
+    e.setRoot(45.0);
+    const auto t = tuning(et::TuningMode::EqualTempered);
+    // Just above the midpoint, by less than the hysteresis band: only "nearest" can decide.
+    CHECK(e.targetHz(0, t, above(e, 750.0 + 0.25 * H)) == Approx(e.rootHz() * std::exp2(8.0 / 12.0)).epsilon(1e-12));
+    CHECK(e.targetHz(1, t, above(e, 750.0 - 0.25 * H)) == Approx(e.rootHz() * std::exp2(7.0 / 12.0)).epsilon(1e-12));
+}
+
+TEST_CASE("12-TET memory is cleared by Free and a root change keeps the relative key", "[tuning][engine][hysteresis]")
+{
+    constexpr double H = et::TuningEngine::kHysteresisCents;
+    constexpr double nearUpper = 750.0 + 0.25 * H;
+    et::TuningEngine e;
+    e.setRoot(45.0);
+    const auto t = tuning(et::TuningMode::EqualTempered);
+    const auto freeT = tuning(et::TuningMode::Free);
+
+    e.targetHz(0, t, above(e, 700.0)); // settle on semitone 7
+    CHECK(e.targetHz(0, t, above(e, nearUpper)) == Approx(e.rootHz() * std::exp2(7.0 / 12.0)).epsilon(1e-12));
+    // Through Free the memory is forgotten: the same input now picks the nearest (semitone 8).
+    e.targetHz(0, freeT, above(e, nearUpper));
+    CHECK(e.targetHz(0, t, above(e, nearUpper)) == Approx(e.rootHz() * std::exp2(8.0 / 12.0)).epsilon(1e-12));
+
+    // The key is relative to the root: after a root change the same relative input sticks to 8.
+    e.targetHz(1, t, above(e, 800.0)); // settle on semitone 8
+    e.setRoot(52.0);
+    CHECK(e.targetHz(1, t, above(e, 750.0 - 0.25 * H)) == Approx(e.rootHz() * std::exp2(8.0 / 12.0)).epsilon(1e-12));
+}
+
 TEST_CASE("Extreme roots and inputs never produce NaN or infinity", "[tuning][engine][extreme]")
 {
     const double inf = std::numeric_limits<double>::infinity();

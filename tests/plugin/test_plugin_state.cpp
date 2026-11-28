@@ -206,7 +206,7 @@ TEST_CASE("Right tag with unknown and out-of-range parameters is handled safely"
     CHECK(raw(p, "v2_pitch") >= ep::kPitchMinNote);
     CHECK(raw(p, "v3_wave") >= 0.0f);
     CHECK(raw(p, "v3_wave") <= static_cast<float>(ethernauta::kNumWaveforms - 1));
-    CHECK(p.getParameters().size() == ep::kNumVoices * 7 + 1);
+    CHECK(p.getParameters().size() == ep::kTotalParams);
 
     // And the processor still renders finite audio afterwards.
     prepare(p, 48000.0, 512);
