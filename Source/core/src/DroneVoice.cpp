@@ -30,6 +30,7 @@ void DroneVoice::reset() noexcept
 {
     osc_.reset();
     gate_.reset();
+    if (gate_.isIdle()) completeGlide();
     gain_.snapTo(gainDbToLinear(params_.gainDb));
 }
 
@@ -55,9 +56,14 @@ void DroneVoice::setWaveform(Waveform w) noexcept
 void DroneVoice::setLatched(bool latched) noexcept
 {
     params_.latched = latched;
-    // Opening from idle: the gain must not glide in from a stale value; the attack alone fades in.
-    if (latched && gate_.isIdle()) gain_.snapTo(gain_.target());
+    // Opening from idle: the gain must not glide in from a stale value; the attack alone fades in,
+    // and a pending glide completes first so the voice never resumes from a stale pitch.
+    if (gate_.isIdle()) {
+        completeGlide();
+        if (latched) gain_.snapTo(gain_.target());
+    }
     gate_.setOpen(latched);
+    if (gate_.isIdle()) completeGlide(); // closing before any envelope progress idles at once
 }
 
 void DroneVoice::setGainDb(float db) noexcept

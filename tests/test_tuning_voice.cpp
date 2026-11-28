@@ -269,3 +269,61 @@ TEST_CASE("Rendered frequency follows a root change through the glide", "[voice]
     const double hz = testutil::estimateFrequency(settled, sr, 48000);
     CHECK(hz == Approx(et::midiNoteToHz(50.0) * 1.5).epsilon(1e-3));
 }
+
+TEST_CASE("Unlatch then relatch with no process() in between never resumes a stale glide", "[voice][glide]")
+{
+    constexpr double sr = 48000.0;
+    constexpr double far = 1760.0;
+    auto v = makeSine(sr, true); // gate open, envelope never processed
+    v.setFrequencyHz(far);       // gate is not idle, so this starts a glide
+    v.setLatched(false);         // progress is still 0: the gate is idle at once
+    INFO("after unlatch: " << v.frequencyHz() << " target " << v.targetFrequencyHz());
+    CHECK(v.frequencyHz() == v.targetFrequencyHz());
+    v.setLatched(true);
+    INFO("after relatch: " << v.frequencyHz() << " target " << v.targetFrequencyHz());
+    CHECK(v.frequencyHz() == v.targetFrequencyHz());
+    CHECK(v.targetFrequencyHz() == far);
+
+    const auto out = testutil::render(v, 4800, 512);
+    const double hz = testutil::estimateFrequency(out, sr, 960);
+    INFO("measured " << hz);
+    CHECK(hz == Approx(far).epsilon(1e-3));
+}
+
+TEST_CASE("The idle invariant holds through setPitch and setParams without process()", "[voice][glide]")
+{
+    constexpr double sr = 48000.0;
+    auto v = makeSine(sr, true);
+    v.setPitch(81.0f); // 880 Hz, glide starts
+    v.setLatched(false);
+    CHECK(v.frequencyHz() == v.targetFrequencyHz());
+
+    auto p = v.params();
+    p.latched = true;
+    v.setParams(p);
+    CHECK(v.frequencyHz() == v.targetFrequencyHz());
+    const auto out = testutil::render(v, 4800, 512);
+    const double hz = testutil::estimateFrequency(out, sr, 960);
+    INFO("measured " << hz);
+    CHECK(hz == Approx(880.0).epsilon(1e-3));
+}
+
+TEST_CASE("A genuinely sounding voice still glides after a retune", "[voice][glide]")
+{
+    auto v = makeSine(48000.0, true);
+    v.setFrequencyHz(110.0);
+    testutil::render(v, 4800, 64); // envelope open and processed
+    v.setFrequencyHz(440.0);
+    CHECK(v.frequencyHz() != v.targetFrequencyHz());
+    CHECK(v.frequencyHz() == Approx(110.0).epsilon(1e-9));
+
+    std::vector<float> scratch(1, 0.0f);
+    double prev = v.frequencyHz();
+    for (int i = 0; i < 4800; ++i) {
+        v.process(scratch.data(), 1);
+        REQUIRE(v.frequencyHz() >= prev);
+        prev = v.frequencyHz();
+    }
+    CHECK(prev > 110.0);
+    CHECK(prev < 440.0);
+}
