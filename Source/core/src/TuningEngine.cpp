@@ -89,8 +89,26 @@ double TuningEngine::targetHz(int voice, const VoiceTuning& tuning, double freeH
             const auto& d = kJustTable[clampTo(tuning.degree, 0, kNumJustDegrees - 1)];
             return rootHz_ * d.ratio() * std::exp2(static_cast<double>(octave));
         }
-        case TuningMode::EqualTempered:
         case TuningMode::Just: {
+            const double cents = ratioToCents(f / rootHz_);
+            if (candidates_.size() == 0) {
+                mem.mode = TuningMode::Just;
+                return sanitizeHz(f * std::exp2(static_cast<double>(octave)));
+            }
+            SnapState state;
+            state.valid = mem.mode == TuningMode::Just;
+            state.key = mem.key;
+            const long long key = selectSnapKey(candidates_, state, cents, tuning.snapHysteresisCents);
+            mem.mode = TuningMode::Just;
+            mem.key = key;
+            const double s = tuning.snapStrength > 0.0 ? (tuning.snapStrength < 1.0 ? tuning.snapStrength : 1.0) : 0.0;
+            if (s <= 0.0) return sanitizeHz(f * std::exp2(static_cast<double>(octave)));
+            if (s >= 1.0)
+                return rootHz_ * candidates_.keyRatio(key) * std::exp2(static_cast<double>(octave));
+            const double snapped = cents + s * (candidates_.keyCents(key) - cents);
+            return sanitizeHz(rootHz_ * std::exp2(snapped / 1200.0 + static_cast<double>(octave)));
+        }
+        case TuningMode::EqualTempered: {
             const double cents = ratioToCents(f / rootHz_);
             long long key = nearestKey(tuning.mode, cents);
             if (mem.mode == tuning.mode && key != mem.key) {
