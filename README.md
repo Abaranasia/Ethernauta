@@ -3,10 +3,10 @@
 A JUCE + C++ drone synthesizer with six independent drone voices. Each voice has a waveform selector,
 a latch switch (the voice keeps sounding until toggled off), a gain fader and a pitch control.
 
-Status: step 4, slice 1. Six independent voices (`Voice 1`..`Voice 6`), click-free waveform switching, an
+Status: step 4, slice 3. Six independent voices (`Voice 1`..`Voice 6`), click-free waveform switching, an
 output headroom stage, a shared-root tuning engine (free, 12-TET, just, degree, choir) with glide, snap
-controls, choir tuning (triads from the shared root) and plugin-layer tests. No voice linking, modulation
-or roughness model yet.
+controls, choir tuning (triads from the shared root), slow per-member choir drift and plugin-layer tests.
+No voice linking, general modulation or roughness model yet.
 
 License: undecided (no LICENSE file yet).
 
@@ -14,7 +14,7 @@ License: undecided (no LICENSE file yet).
 
 | Path | Contents |
 |---|---|
-| `Source/core` | `ethernauta_core`: JUCE-free, real-time-safe C++17 static library. `Oscillator` (PolyBLEP sine/saw/square, triangle; 5 ms waveform crossfade), `ParamSmoother`, `LatchGate`, `DroneVoice`, `VoiceParams`, `MasterStage`, `Tuning` (math + just table), `Choir` (triad ratios), `TuningEngine` |
+| `Source/core` | `ethernauta_core`: JUCE-free, real-time-safe C++17 static library. `Oscillator` (PolyBLEP sine/saw/square, triangle; 5 ms waveform crossfade), `ParamSmoother`, `LatchGate`, `DroneVoice`, `VoiceParams`, `MasterStage`, `Tuning` (math + just table), `Choir` (triad ratios), `TuningEngine`, `DriftLfo` (slow choir drift source) |
 | `Source/plugin` | `EthernautaPlugin` (VST3 + Standalone): processor, editor, `VoicePanel`, parameter layout |
 | `tests` | Catch2 v3 tests for the core, plus a guard that the core links no JUCE |
 | `tests/plugin` | Opt-in Catch2 tests of the real processor, parameter layout, state and editor (needs `ETHERNAUTA_BUILD_PLUGIN=ON`) |
@@ -29,7 +29,7 @@ Design notes:
 - Gain is in dB; at or below -60 dB the voice is exactly muted. Pitch is a fractional MIDI note plus cents (default A2 = 110 Hz).
 - Block-size independent: any block split renders bit-identical audio.
 - Six voices: `kNumVoices` in `Source/plugin/ParameterLayout.h` is the single count used by the layout, processor and editor.
-- Parameter IDs are stable strings per voice: `v1_wave`, `v1_latch`, `v1_gain`, `v1_pitch`, `v1_tuning`, `v1_degree`, `v1_octave` ... `v6_*`, plus `v1_snap` ... `v6_snap` and the globals `root`, `snap_hysteresis`, `choir1_chord`, `choir2_chord` (52 parameters). Parameter order is append-only because hosts may automate by index: `v1..v6` wave/latch/gain/pitch first (the original layout), then `v1..v6` tuning/degree/octave, then `root`, then `v1..v6` snap and `snap_hysteresis`, then `choir1_chord`, `choir2_chord`; new parameters are appended, never inserted. Defaults: sine, unlatched, -12 dB; pitches form an open A-major stack (A2 E3 A3 C#4 E4 A4); tuning Free.
+- Parameter IDs are stable strings per voice: `v1_wave`, `v1_latch`, `v1_gain`, `v1_pitch`, `v1_tuning`, `v1_degree`, `v1_octave` ... `v6_*`, plus `v1_snap` ... `v6_snap` and the globals `root`, `snap_hysteresis`, `choir1_chord`, `choir2_chord`, `choir_drift` (53 parameters). Parameter order is append-only because hosts may automate by index: `v1..v6` wave/latch/gain/pitch first (the original layout), then `v1..v6` tuning/degree/octave, then `root`, then `v1..v6` snap and `snap_hysteresis`, then `choir1_chord`, `choir2_chord`, then `choir_drift`; new parameters are appended, never inserted. Defaults: sine, unlatched, -12 dB; pitches form an open A-major stack (A2 E3 A3 C#4 E4 A4); tuning Free.
 - Headroom: the summed voices pass through a fixed -6 dB trim and `tanh`, so six latched full-gain voices stay within [-1, 1]; silence stays exactly 0.
 - A waveform change while sounding crossfades over 5 ms (no click); while idle it switches instantly. A gain change while idle (or at latch) never ramps.
 
@@ -68,6 +68,15 @@ A choir is three voices tuned as a triad from the one shared root (never neighbo
 
 - `v{n}_octave` still transposes each voice; `pitch` is ignored. The chord order is frozen (`Source/core/include/ethernauta/Choir.h`); entries may only be appended.
 - State schema 4 added these parameters; older state loads with both chords at Major.
+
+### Choir drift
+
+The global `choir_drift` (0..6 cents, step 0.1, default 0 = off; editor: "Drift", second row) makes every voice whose tuning is `Choir` wander by up to +-depth cents so the members of a choir are not perfectly static. Other tuning modes never drift, and depth 0 renders bit-identically to a synth without the feature.
+
+- The offset is added in the cents domain, per sample, on top of the tuned target and the retune glide; the tuned grid itself never changes.
+- Each voice has its own generator (`DriftLfo`): the mean of two sines at slow, incommensurate rates (0.05-0.19 Hz, different per voice index) with fixed start phases, so voices never lock and every run is identical (no random numbers, no clock). The value depends only on the number of samples a voice has sounded, so rendering stays bit-identical for any block size.
+- The depth is smoothed (250 ms one-pole), so changing the knob or leaving Choir mode fades the drift in or out without a click. While a voice is idle there is no drift: it sits exactly at its target, and the drift clock continues where it stopped when the voice sounds again. `prepare()` and `reset()` restart it.
+- State schema 5 added this parameter; older state loads with drift off.
 
 ## Build and test
 
@@ -108,7 +117,7 @@ Other options: `-DETHERNAUTA_JUCE_DIR=<path>`, `-DETHERNAUTA_JUCE_FETCH=OFF`, `-
 1. One voice (done).
 2. Six independent voices (done).
 3. Autotune / harmonic tuning (slice 1 done: shared root, modes, glide).
-4. Three-voice choirs (slice 1 done: triads from the shared root; drift, timbre/formants and linking later).
+4. Three-voice choirs (slice 1 done: triads from the shared root; slice 3 done: slow per-member drift; timbre/formants and linking later).
 5. Linking voices to replicate one voice's setup.
 6. Release hardening: pluginval level 10 in CI, CPU budget test, license decision, installers.
 

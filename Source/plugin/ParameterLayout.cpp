@@ -133,6 +133,15 @@ void addChoirParameters(juce::AudioProcessorValueTreeState::ParameterLayout& lay
             "Choir " + juce::String(choir + 1) + " Chord", chords, static_cast<int>(ChoirChord::Major)));
 }
 
+void addDriftParameters(juce::AudioProcessorValueTreeState::ParameterLayout& layout)
+{
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID{kChoirDriftParamId, kDriftParameterVersion}, "Choir Drift",
+        juce::NormalisableRange<float>(0.0f, kChoirDriftMaxCents, 0.1f), kChoirDriftDefaultCents,
+        juce::AudioParameterFloatAttributes().withLabel("ct").withStringFromValueFunction(
+            [](float v, int) { return juce::String(v, 1); })));
+}
+
 juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
 {
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
@@ -144,6 +153,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
     addGlobalParameters(layout);
     addSnapParameters(layout);
     addChoirParameters(layout);
+    addDriftParameters(layout);
     return layout;
 }
 

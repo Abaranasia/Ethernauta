@@ -49,6 +49,12 @@ inline std::vector<std::string> expectedChoirIds()
     return {"choir1_chord", "choir2_chord"};
 }
 
+// Parameter added with choir drift (state schema 5): appended after the choir chords.
+inline std::vector<std::string> expectedDriftIds()
+{
+    return {"choir_drift"};
+}
+
 inline std::vector<std::string> allExpectedIds(int numVoices)
 {
     auto ids = expectedIds(numVoices);
@@ -58,6 +64,8 @@ inline std::vector<std::string> allExpectedIds(int numVoices)
     ids.insert(ids.end(), snap.begin(), snap.end());
     const auto choir = expectedChoirIds();
     ids.insert(ids.end(), choir.begin(), choir.end());
+    const auto drift = expectedDriftIds();
+    ids.insert(ids.end(), drift.begin(), drift.end());
     return ids;
 }
 

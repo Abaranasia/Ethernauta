@@ -56,6 +56,8 @@ private:
     void resetSnapParametersToDefaults();
     // And for the choir chords, unknown to presets saved before schema 4.
     void resetChoirParametersToDefaults();
+    // And for the choir drift depth, unknown to presets saved before schema 5.
+    void resetDriftParametersToDefaults();
 
     juce::AudioProcessorValueTreeState apvts_;
     std::array<VoiceParamPointers, ethernauta::plugin::kNumVoices> params_{};
@@ -63,6 +65,7 @@ private:
     std::atomic<float>* root_ = nullptr;
     std::atomic<float>* snapHysteresis_ = nullptr;
     std::array<std::atomic<float>*, ethernauta::plugin::kNumChoirs> choirChord_{};
+    std::atomic<float>* choirDrift_ = nullptr;
     ethernauta::TuningEngine tuner_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EthernautaAudioProcessor)

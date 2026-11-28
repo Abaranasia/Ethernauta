@@ -32,6 +32,9 @@ EthernautaAudioProcessor::EthernautaAudioProcessor()
     snapHysteresis_ = apvts_.getRawParameterValue(ethernauta::plugin::kSnapHysteresisParamId);
     for (int c = 0; c < ethernauta::plugin::kNumChoirs; ++c)
         choirChord_[static_cast<std::size_t>(c)] = apvts_.getRawParameterValue(ethernauta::plugin::kChoirChordParamIds[c]);
+    choirDrift_ = apvts_.getRawParameterValue(ethernauta::plugin::kChoirDriftParamId);
+    // Each voice drifts on its own LFO (rates and phases follow the voice index).
+    for (std::size_t i = 0; i < voices_.size(); ++i) voices_[i].setDriftVoiceIndex(static_cast<int>(i));
     apvts_.state.setProperty(kSchemaVersionKey, ethernauta::plugin::kStateSchemaVersion, nullptr);
 }
 
@@ -62,6 +65,7 @@ void EthernautaAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, ju
     // Every voice is tuned from the one shared root; the voice glides to the resulting frequency.
     tuner_.setRoot(static_cast<double>(root_->load(std::memory_order_relaxed)));
     const double snapHysteresis = static_cast<double>(snapHysteresis_->load(std::memory_order_relaxed));
+    const float choirDriftCents = choirDrift_->load(std::memory_order_relaxed);
     float* left = buffer.getWritePointer(0);
     for (std::size_t i = 0; i < voices_.size(); ++i) {
         const auto& p = params_[i];
@@ -82,6 +86,8 @@ void EthernautaAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, ju
         voice.setWaveform(ethernauta::waveformFromIndex(static_cast<int>(std::lround(p.wave->load(std::memory_order_relaxed)))));
         voice.setGainDb(p.gain->load(std::memory_order_relaxed));
         voice.setFrequencyHz(tuner_.targetHz(static_cast<int>(i), vt, freeHz));
+        // Drift belongs to Choir mode only; every other mode passes depth 0 (exactly no drift).
+        voice.setDriftDepth(vt.mode == ethernauta::TuningMode::Choir ? choirDriftCents : 0.0f);
         voice.setLatched(p.latch->load(std::memory_order_relaxed) >= 0.5f); // last: the rest is final when the gate opens
         voice.process(left, numSamples);
     }
@@ -121,6 +127,8 @@ void EthernautaAudioProcessor::setStateInformation(const void* data, int sizeInB
     if (savedVersion < 3) resetSnapParametersToDefaults();
     // Schema 4 added choir tuning: an older preset has no chords (Major, the default, applies).
     if (savedVersion < 4) resetChoirParametersToDefaults();
+    // Schema 5 added choir drift: an older preset has none, so it stays off (depth 0), as it sounded.
+    if (savedVersion < 5) resetDriftParametersToDefaults();
     apvts_.state.setProperty(kSchemaVersionKey, ethernauta::plugin::kStateSchemaVersion, nullptr);
 }
 
@@ -152,6 +160,12 @@ void EthernautaAudioProcessor::resetChoirParametersToDefaults()
 {
     for (const char* id : ethernauta::plugin::kChoirChordParamIds)
         if (auto* p = apvts_.getParameter(id)) p->setValueNotifyingHost(p->getDefaultValue());
+}
+
+void EthernautaAudioProcessor::resetDriftParametersToDefaults()
+{
+    if (auto* p = apvts_.getParameter(ethernauta::plugin::kChoirDriftParamId))
+        p->setValueNotifyingHost(p->getDefaultValue());
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()

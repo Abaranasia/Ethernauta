@@ -32,7 +32,8 @@ add_executable(ethernauta_tests
   test_tuning.cpp
   test_tuning_voice.cpp
   test_snap.cpp
-  test_choir.cpp)
+  test_choir.cpp
+  test_choir_drift.cpp)
 target_include_directories(ethernauta_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 find_package(Threads REQUIRED)
 target_link_libraries(ethernauta_tests PRIVATE ethernauta_core Catch2::Catch2WithMain Threads::Threads)

@@ -1,4 +1,5 @@
 #pragma once
+#include <ethernauta/DriftLfo.h>
 #include <ethernauta/LatchGate.h>
 #include <ethernauta/Oscillator.h>
 #include <ethernauta/ParamSmoother.h>
@@ -45,7 +46,19 @@ public:
     // every block with an unchanged value.
     void setFrequencyHz(double hz) noexcept;
 
-    double frequencyHz() const noexcept;       // current (gliding) frequency
+    // Choir drift: a slow, deterministic pitch offset of up to +-depth cents (see DriftLfo) added in the
+    // cents domain on top of the target and the glide, per sample, so it never changes the tuned
+    // target. depth is clamped to [0, kMaxDriftCents] (non-finite values are ignored); 0, the default,
+    // renders bit-identically to a voice without drift. The depth is smoothed (no click when it
+    // changes), except while idle where it takes effect at once. The drift runs only while the voice
+    // sounds: an idle voice has no offset (it sits at its target, as above) and the drift clock
+    // advances per rendered sample, so a relatch continues where it stopped. Voices with different
+    // indices drift differently; prepare() and reset() restart the clock.
+    void setDriftDepth(float cents) noexcept;
+    float driftDepth() const noexcept { return driftDepth_.target(); }
+    void setDriftVoiceIndex(int voiceIndex) noexcept { lfo_.setVoiceIndex(voiceIndex); }
+
+    double frequencyHz() const noexcept;       // current (gliding, drifting) frequency
     double targetFrequencyHz() const noexcept { return targetHz_; }
 
     static constexpr double kGlideSeconds = 0.08; // time constant of the retune glide
@@ -59,6 +72,7 @@ private:
     static constexpr double kAttackSeconds = 0.02;
     static constexpr double kReleaseSeconds = 0.3;
     static constexpr double kGainSmoothingSeconds = 0.02;
+    static constexpr double kDriftDepthSmoothingSeconds = 0.25;
 
     void jumpToFrequency(double hz) noexcept;
     void completeGlide() noexcept; // snap an in-flight glide to its target
@@ -69,6 +83,10 @@ private:
     double glideTargetCents_ = 0.0;
     double glideCoeff_ = 1.0;
     bool gliding_ = false;
+    DriftLfo lfo_;
+    ParamSmoother driftDepth_;       // smoothed depth in cents
+    std::uint64_t driftSample_ = 0;  // rendered (sounding) samples since prepare()/reset()
+    double driftCents_ = 0.0;        // offset currently applied to the oscillator
     Oscillator osc_;
     LatchGate gate_;
     ParamSmoother gain_;

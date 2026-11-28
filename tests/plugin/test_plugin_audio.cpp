@@ -448,3 +448,86 @@ TEST_CASE("A choir chord does not affect a voice that is not in Choir mode", "[p
     const double hz = measureVoice(p, 1, 48000.0);
     CHECK(hz == Catch::Approx(midiNoteToHz(static_cast<double>(ep::defaultPitchNote(1)))).epsilon(1e-3));
 }
+
+// ---- Choir drift wiring ---------------------------------------------------------------------------
+
+TEST_CASE("Choir drift changes the audio in Choir mode only", "[plugin][audio][tuning][choir][drift]")
+{
+    constexpr double sr = 48000.0;
+    constexpr int total = 48000 * 4;
+    for (int mode = 0; mode < 5; ++mode) { // Free, 12-TET, Just, Degree, Choir
+        auto renderWith = [&](float drift) {
+            EthernautaAudioProcessor p;
+            setPlain(p, "choir_drift", drift);
+            setPlain(p, voiceId(1, "tuning"), static_cast<float>(mode));
+            latch(p, 1);
+            prepare(p, sr, 512);
+            return render(p, total, 512).left;
+        };
+        const auto off = renderWith(0.0f);
+        const auto on = renderWith(6.0f);
+        REQUIRE(rms(off, 4800) > 0.01);
+        INFO("tuning mode " << mode);
+        if (mode == 4) {
+            CHECK_FALSE(bitEqual(on, off));
+            // Audible in the waveform, not a rounding-level difference: the drift slips the phase of a
+            // 165 Hz tone by a visible fraction of a cycle within seconds.
+            float maxDiff = 0.0f;
+            for (std::size_t i = 0; i < on.size(); ++i) maxDiff = std::max(maxDiff, std::fabs(on[i] - off[i]));
+            CHECK(maxDiff > 0.05f);
+        } else {
+            CHECK(bitEqual(on, off));
+        }
+    }
+}
+
+TEST_CASE("Choir drift is off by default and renders as before", "[plugin][audio][choir][drift]")
+{
+    constexpr double sr = 48000.0;
+    auto renderChoir = [&](bool touchDrift) {
+        EthernautaAudioProcessor p;
+        if (touchDrift) setPlain(p, "choir_drift", 0.0f);
+        for (int v = 0; v < ep::kNumVoices; ++v) {
+            setPlain(p, voiceId(v, "tuning"), 4.0f);
+            latch(p, v);
+        }
+        prepare(p, sr, 512);
+        return render(p, 24000, 512).left;
+    };
+    CHECK(bitEqual(renderChoir(true), renderChoir(false)));
+}
+
+TEST_CASE("Drifting Choir output is identical for every block size", "[plugin][audio][determinism][choir][drift]")
+{
+    const int total = 7 * 4096;
+    std::vector<Rendered> results;
+    for (const int block : kBlocks) {
+        EthernautaAudioProcessor p;
+        setPlain(p, "choir_drift", 6.0f);
+        for (int v = 0; v < ep::kNumVoices; ++v) {
+            setPlain(p, voiceId(v, "tuning"), 4.0f);
+            latch(p, v);
+        }
+        prepare(p, 48000.0, block);
+        results.push_back(render(p, total, block));
+    }
+    REQUIRE(rms(results[0].left, 0) > 0.01);
+    for (std::size_t i = 1; i < results.size(); ++i) REQUIRE(bitEqual(results[i].left, results[0].left));
+}
+
+TEST_CASE("Leaving Choir mode switches the drift off for that voice", "[plugin][audio][choir][drift]")
+{
+    // After the 0.25 s depth ramp the voice is a plain Free voice again, so its measured frequency is
+    // exactly the pitch parameter's (A2 = 110 Hz) rather than a drifting one.
+    constexpr double sr = 48000.0;
+    EthernautaAudioProcessor p;
+    setPlain(p, "choir_drift", 6.0f);
+    setPlain(p, voiceId(0, "tuning"), 4.0f);
+    latch(p, 0);
+    prepare(p, sr, 512);
+    render(p, 48000, 512);
+    setPlain(p, voiceId(0, "tuning"), 0.0f); // Free
+    render(p, 48000 * 3, 512);               // glide and depth ramp are long finished
+    const auto out = render(p, 48000, 512);
+    CHECK(estimateFrequencyHz(out.left, sr) == Catch::Approx(midiNoteToHz(45.0)).epsilon(1e-5));
+}
