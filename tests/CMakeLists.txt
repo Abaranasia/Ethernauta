@@ -30,7 +30,8 @@ add_executable(ethernauta_tests
   test_drone_voice.cpp
   test_master_stage.cpp
   test_tuning.cpp
-  test_tuning_voice.cpp)
+  test_tuning_voice.cpp
+  test_snap.cpp)
 target_include_directories(ethernauta_tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(ethernauta_tests PRIVATE ethernauta_core Catch2::Catch2WithMain)
 ethernauta_set_warnings(ethernauta_tests)
