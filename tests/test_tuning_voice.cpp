@@ -42,6 +42,10 @@ bool bitEqual(const std::vector<float>& a, const std::vector<float>& b)
 }
 
 double centsBetween(double a, double b) { return 1200.0 * std::log2(a / b); }
+
+const double kHz110 = et::midiNoteToHz(45.0);
+const double kHz880 = et::midiNoteToHz(81.0);
+const double kHz1760 = et::midiNoteToHz(93.0);
 } // namespace
 
 TEST_CASE("Frequency changes while idle jump straight to the target", "[voice][glide]")
@@ -273,7 +277,7 @@ TEST_CASE("Rendered frequency follows a root change through the glide", "[voice]
 TEST_CASE("Unlatch then relatch with no process() in between never resumes a stale glide", "[voice][glide]")
 {
     constexpr double sr = 48000.0;
-    constexpr double far = 1760.0;
+    const double far = kHz1760;
     auto v = makeSine(sr, true); // gate open, envelope never processed
     v.setFrequencyHz(far);       // gate is not idle, so this starts a glide
     v.setLatched(false);         // progress is still 0: the gate is idle at once
@@ -305,17 +309,17 @@ TEST_CASE("The idle invariant holds through setPitch and setParams without proce
     const auto out = testutil::render(v, 4800, 512);
     const double hz = testutil::estimateFrequency(out, sr, 960);
     INFO("measured " << hz);
-    CHECK(hz == Approx(880.0).epsilon(1e-3));
+    CHECK(hz == Approx(kHz880).epsilon(1e-3));
 }
 
 TEST_CASE("A genuinely sounding voice still glides after a retune", "[voice][glide]")
 {
     auto v = makeSine(48000.0, true);
-    v.setFrequencyHz(110.0);
+    v.setFrequencyHz(kHz110);
     testutil::render(v, 4800, 64); // envelope open and processed
     v.setFrequencyHz(440.0);
     CHECK(v.frequencyHz() != v.targetFrequencyHz());
-    CHECK(v.frequencyHz() == Approx(110.0).epsilon(1e-9));
+    CHECK(v.frequencyHz() == Approx(kHz110).epsilon(1e-9));
 
     std::vector<float> scratch(1, 0.0f);
     double prev = v.frequencyHz();
@@ -324,6 +328,31 @@ TEST_CASE("A genuinely sounding voice still glides after a retune", "[voice][gli
         REQUIRE(v.frequencyHz() >= prev);
         prev = v.frequencyHz();
     }
-    CHECK(prev > 110.0);
+    CHECK(prev > kHz110);
     CHECK(prev < 440.0);
+}
+
+TEST_CASE("reset() on a releasing voice completes the pending glide", "[voice][glide]")
+{
+    constexpr double sr = 48000.0;
+    auto v = makeSine(sr, true);
+    v.setFrequencyHz(kHz110);
+    testutil::render(v, 4800, 64); // gate fully open
+    v.setLatched(false);
+    testutil::render(v, 480, 64);  // releasing: gate closed, progress > 0
+    REQUIRE(v.isActive());
+    v.setFrequencyHz(kHz1760);     // not idle, so this starts a glide
+    REQUIRE(v.frequencyHz() != v.targetFrequencyHz());
+
+    v.reset(); // forces gate progress to 0: the voice is idle
+    INFO("after reset: " << v.frequencyHz() << " target " << v.targetFrequencyHz());
+    REQUIRE_FALSE(v.isActive());
+    CHECK(v.frequencyHz() == v.targetFrequencyHz());
+
+    v.setLatched(true); // no setFrequencyHz: the target must already be in effect
+    CHECK(v.frequencyHz() == v.targetFrequencyHz());
+    const auto out = testutil::render(v, 4800, 512);
+    const double hz = testutil::estimateFrequency(out, sr, 960);
+    INFO("measured " << hz);
+    CHECK(hz == Approx(kHz1760).epsilon(1e-3));
 }
