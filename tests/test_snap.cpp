@@ -7,6 +7,7 @@
 
 #include <cmath>
 #include <limits>
+#include <vector>
 
 namespace et = ethernauta;
 using Catch::Approx;
@@ -188,16 +189,93 @@ TEST_CASE("Hysteresis survives the octave wraparound without chattering", "[snap
     CHECK(et::snapCents(c, s, 956.0, 1.0, 5.0) == Approx(1200.0));
 }
 
-TEST_CASE("Engine: Just mode strength 1 keeps the existing behaviour", "[snap][engine]")
-{
-    et::TuningEngine e;
-    et::TuningEngine ref;
-    et::VoiceTuning def;
-    def.mode = et::TuningMode::Just;
-    for (const double c : {5.0, 120.0, 390.0, 700.0, 1100.0, 1300.0, -50.0, 2500.0}) {
-        const double hz = above(e, c);
-        CHECK(e.targetHz(0, justTuning(1.0), hz) == ref.targetHz(0, def, hz));
+namespace {
+// Independent reference of the pre-snap Just behaviour (commit 9d6b9ad), written from first principles:
+// an endless ladder of grid points (key = 16 * octave + degree over table rows 0..15), nearest point in cents
+// against the shared root, hold rule "keep <= move + 3 cents", target = root * ratio * 2^(octave + offset).
+// It deliberately uses neither snapCents, selectSnapKey nor TuningEngine.
+struct RefJust {
+    bool has = false;
+    long long key = 0;
+
+    static double keyCents(long long k)
+    {
+        long long oct = k / 16;
+        long long idx = k - oct * 16;
+        if (idx < 0) { idx += 16; --oct; }
+        const auto& d = et::kJustTable[idx];
+        return 1200.0 * static_cast<double>(oct) + 1200.0 * std::log2(static_cast<double>(d.num) / d.den);
     }
+
+    double target(double rootHz, double freeHz, int octaveOffset)
+    {
+        const double cents = 1200.0 * std::log2(freeHz / rootHz);
+        const long long base = static_cast<long long>(std::floor(cents / 1200.0)) * 16;
+        long long best = base - 16;
+        for (long long k = base - 16; k <= base + 32; ++k)
+            if (std::fabs(cents - keyCents(k)) < std::fabs(cents - keyCents(best))) best = k;
+        if (has && best != key && std::fabs(cents - keyCents(key)) <= std::fabs(cents - keyCents(best)) + 3.0)
+            best = key;
+        has = true;
+        key = best;
+        long long oct = best / 16;
+        long long idx = best - oct * 16;
+        if (idx < 0) { idx += 16; --oct; }
+        const auto& d = et::kJustTable[idx];
+        return rootHz * (static_cast<double>(d.num) / d.den) * std::exp2(static_cast<double>(oct + octaveOffset));
+    }
+};
+} // namespace
+
+TEST_CASE("Engine: Just mode strength 1 matches an independent reference of the pre-snap behaviour",
+          "[snap][engine]")
+{
+    // Tolerance: the reference computes cents with log2 of the exact ratio while the engine uses cached 9-decimal
+    // table cents, so grid decisions are identical away from exact ties (the sweep avoids them) and the
+    // frequencies agree to a few ulps. Only the grid choice is asserted exactly (via the 1e-12 relative bound,
+    // far below the ~1 cent spacing between distinct candidates); the Hz value is not claimed bit-exact.
+    const double roots[] = {21.0, 33.0, 45.0, 57.3};
+    const int octaves[] = {0, 1, -2, 3};
+    int checked = 0;
+    for (const double rootNote : roots)
+        for (const int oct : octaves) {
+            et::TuningEngine e;
+            e.setRoot(rootNote);
+            const double root = e.rootHz();
+            et::VoiceTuning t = justTuning(1.0, et::kDefaultSnapHysteresisCents, oct);
+
+            // (1) memoryless sweep: one fresh voice per probe (voice index cycles, memory reset in between).
+            RefJust fresh;
+            for (double c = -1250.0; c < 2500.0; c += 13.7) {
+                e.reset();
+                RefJust r;
+                const double hz = root * std::exp2(c / 1200.0);
+                CHECK(e.targetHz(0, t, hz) == Approx(r.target(root, hz, oct)).epsilon(1e-12));
+                ++checked;
+            }
+
+            // (2) drift across every candidate midpoint (incl. the octave wrap) and back, 0.5 cent steps,
+            // exercising the 3-cent hysteresis; also in other free-octaves. Offsets avoid exact ties (|keep-move| == 3),
+            // where the engine's cached 9-decimal cents and the reference's exact log2 may legitimately differ.
+            for (int k = 0; k < 16; ++k) {
+                const double lo = RefJust::keyCents(k);
+                const double hi = RefJust::keyCents(k + 1);
+                const double mid = 0.5 * (lo + hi);
+                for (const double shift : {0.0, 1200.0, -2400.0}) {
+                    e.reset();
+                    RefJust r;
+                    std::vector<double> path;
+                    for (int i = 0; i <= 32; ++i) path.push_back(mid - 8.1 + 0.5 * i); // never exactly +-1.5 or 0 from mid
+                    for (int i = 32; i >= 0; --i) path.push_back(mid - 8.1 + 0.5 * i);
+                    for (const double c : path) {
+                        const double hz = root * std::exp2((c + shift) / 1200.0);
+                        CHECK(e.targetHz(0, t, hz) == Approx(r.target(root, hz, oct)).epsilon(1e-12));
+                        ++checked;
+                    }
+                }
+            }
+        }
+    CHECK(checked > 5000);
 }
 
 TEST_CASE("Engine: strength 0 is the free frequency, bit for bit", "[snap][engine]")
@@ -309,7 +387,42 @@ TEST_CASE("Engine: changing the candidate set drops stale snap memory", "[snap][
     CHECK(centsAbove(e, e.targetHz(0, justTuning(1.0, 1000.0), above(e, 180.0))) == Approx(200.0).margin(1e-9));
 }
 
-TEST_CASE("Engine: 12-TET hysteresis margin is independent of the Just default", "[snap][engine]")
+TEST_CASE("Engine: 12-TET hold/switch uses a fixed 3-cent margin, Just uses snapHysteresisCents",
+          "[snap][engine][hysteresis]")
 {
-    CHECK(et::TuningEngine::kHysteresisCents == 3.0);
+    // 12-TET midpoint between semitone 0 and 1 is 50 cents. A held voice switches only once the input is
+    // more than 3 cents past it (keep - move > 3  <=>  c > 51.5 going up, c < 48.5 coming back).
+    const double seq[] = {49.0, 51.0, 51.4, 51.6, 49.0, 48.6, 48.4, 50.0, 52.0, 49.5};
+    const int expectKey[] = {0, 0, 0, 1, 1, 1, 0, 0, 1, 1};
+
+    auto run = [&](double hyst) {
+        et::TuningEngine e;
+        std::vector<double> out;
+        et::VoiceTuning t;
+        t.mode = et::TuningMode::EqualTempered;
+        t.snapHysteresisCents = hyst;
+        for (const double c : seq) out.push_back(e.targetHz(0, t, above(e, c)));
+        return out;
+    };
+    et::TuningEngine ref;
+    const auto base = run(et::kDefaultSnapHysteresisCents);
+    for (size_t i = 0; i < base.size(); ++i)
+        CHECK(centsAbove(ref, base[i]) == Approx(100.0 * expectKey[i]).margin(1e-9));
+    // Bit-identical output whatever snapHysteresisCents says (0, 50, huge, NaN).
+    for (const double h : {0.0, 50.0, 1e9, std::numeric_limits<double>::quiet_NaN()}) {
+        const auto o = run(h);
+        for (size_t i = 0; i < base.size(); ++i) CHECK(o[i] == base[i]);
+    }
+
+    // Just mode IS affected: the same kind of jitter across the 10/9 | 9/8 midpoint (193.157 cents).
+    const double mid = 0.5 * (et::kJustTable[2].cents + et::kJustTable[3].cents);
+    auto runJust = [&](double hyst) {
+        et::TuningEngine e;
+        double last = 0.0;
+        e.targetHz(0, justTuning(1.0, hyst), above(e, mid - 1.0));
+        last = e.targetHz(0, justTuning(1.0, hyst), above(e, mid + 5.0));
+        return centsAbove(e, last);
+    };
+    CHECK(runJust(0.0) == Approx(et::kJustTable[3].cents).margin(1e-9));
+    CHECK(runJust(50.0) == Approx(et::kJustTable[2].cents).margin(1e-9));
 }
