@@ -16,6 +16,10 @@ void DroneVoice::prepare(double sampleRate) noexcept
     osc_.prepare(sampleRate);
     gate_.prepare(sampleRate, kAttackSeconds, kReleaseSeconds);
     gain_.prepare(sampleRate, kGainSmoothingSeconds);
+    lfo_.prepare(sampleRate);
+    driftDepth_.prepare(sampleRate, kDriftDepthSmoothingSeconds);
+    driftDepth_.snapTo(driftDepth_.target()); // no ramp from a stale value
+    driftSample_ = 0;
     const double samples = kGlideSeconds * sampleRate;
     glideCoeff_ = samples > 1.0 ? 1.0 - std::exp(-1.0 / samples) : 1.0;
     const VoiceParams p = params_; // re-apply the stored settings at the new rate
@@ -30,6 +34,8 @@ void DroneVoice::reset() noexcept
 {
     osc_.reset();
     gate_.reset();
+    driftSample_ = 0;
+    driftDepth_.snapTo(driftDepth_.target());
     if (gate_.isIdle()) completeGlide();
     gain_.snapTo(gainDbToLinear(params_.gainDb));
 }
@@ -77,6 +83,17 @@ void DroneVoice::setGainDb(float db) noexcept
         gain_.setTarget(target);
 }
 
+void DroneVoice::setDriftDepth(float cents) noexcept
+{
+    if (!std::isfinite(cents)) return;
+    const float depth = cents < 0.0f ? 0.0f : (cents > static_cast<float>(kMaxDriftCents) ? static_cast<float>(kMaxDriftCents) : cents);
+    // While idle nothing is audible, so take the depth at once instead of ramping on the next latch.
+    if (gate_.isIdle())
+        driftDepth_.snapTo(depth);
+    else
+        driftDepth_.setTarget(depth);
+}
+
 void DroneVoice::setPitch(float midiNote, float cents) noexcept
 {
     params_.midiNote = midiNote;
@@ -89,12 +106,13 @@ void DroneVoice::jumpToFrequency(double hz) noexcept
     targetHz_ = hz;
     glideCents_ = glideTargetCents_ = hzToCents(hz);
     gliding_ = false;
+    driftCents_ = 0.0;
     osc_.setFrequency(hz);
 }
 
 void DroneVoice::completeGlide() noexcept
 {
-    if (gliding_) jumpToFrequency(targetHz_);
+    if (gliding_ || driftCents_ != 0.0) jumpToFrequency(targetHz_); // also drops any drift offset
 }
 
 void DroneVoice::setFrequencyHz(double hz) noexcept
@@ -114,7 +132,7 @@ void DroneVoice::setFrequencyHz(double hz) noexcept
 
 double DroneVoice::frequencyHz() const noexcept
 {
-    return gliding_ ? centsToHz(glideCents_) : targetHz_;
+    return (gliding_ || driftCents_ != 0.0) ? centsToHz(glideCents_ + driftCents_) : targetHz_;
 }
 
 void DroneVoice::process(float* out, int numSamples) noexcept
@@ -125,17 +143,29 @@ void DroneVoice::process(float* out, int numSamples) noexcept
         return;
     }
     for (int i = 0; i < numSamples; ++i) {
+        // Drift: runs only while the depth is (or is ramping to) non-zero, so depth 0 takes exactly the
+        // pre-drift path below. The clock always counts rendered samples, so the value depends only on
+        // how many samples have sounded, never on block boundaries.
+        const bool driftRuns = driftDepth_.target() != 0.0f || !driftDepth_.isSettled();
+        const double drift = driftRuns ? static_cast<double>(driftDepth_.next()) * lfo_.at(driftSample_) : 0.0;
+        ++driftSample_;
+        bool retune = false;
         if (gliding_) {
             const double diff = glideTargetCents_ - glideCents_;
             if (std::fabs(diff) < kGlideSnapCents) {
                 glideCents_ = glideTargetCents_;
                 gliding_ = false;
-                osc_.setFrequency(targetHz_);
             } else {
                 glideCents_ += diff * glideCoeff_;
-                osc_.setFrequency(centsToHz(glideCents_));
             }
+            retune = true;
         }
+        if (driftRuns || driftCents_ != 0.0) {
+            driftCents_ = drift;
+            retune = true;
+        }
+        if (retune)
+            osc_.setFrequency((gliding_ || driftCents_ != 0.0) ? centsToHz(glideCents_ + driftCents_) : targetHz_);
         const float env = gate_.next();
         // The gate just went idle: stop here so the oscillator and gain stop advancing at the same
         // sample for any block size, and settle the glide so a relatch starts at the target.

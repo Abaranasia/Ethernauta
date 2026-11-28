@@ -43,6 +43,8 @@ TEST_CASE("Parameter order is append-only so index-based host automation survive
     // Then the choir chords (appended after the snap controls).
     expected.push_back("choir1_chord");
     expected.push_back("choir2_chord");
+    // Then the choir drift depth (appended after the choir chords).
+    expected.push_back("choir_drift");
     REQUIRE(expected.size() == static_cast<std::size_t>(ep::kTotalParams));
 
     for (int i = 0; i < params.size(); ++i) {
@@ -84,6 +86,7 @@ TEST_CASE("Every voice has its stable parameter IDs", "[plugin][params]")
     CHECK(std::string(ep::kSnapHysteresisParamId) == "snap_hysteresis");
     CHECK(std::string(ep::kChoir1ChordParamId) == "choir1_chord");
     CHECK(std::string(ep::kChoir2ChordParamId) == "choir2_chord");
+    CHECK(std::string(ep::kChoirDriftParamId) == "choir_drift");
 }
 
 TEST_CASE("Tuning parameters expose the documented ranges and defaults", "[plugin][params][tuning]")
@@ -149,8 +152,8 @@ TEST_CASE("Existing parameters keep their IDs at their original indices", "[plug
 TEST_CASE("Snap parameters expose the documented ranges and defaults", "[plugin][params][snap]")
 {
     EthernautaAudioProcessor proc;
-    CHECK(ep::kTotalParams == 52); // 50 before the choir chords
-    CHECK(proc.getParameters().size() == 52);
+    CHECK(ep::kTotalParams == 53); // 50 before the choir chords, 52 before the choir drift
+    CHECK(proc.getParameters().size() == 53);
 
     for (int v = 0; v < ep::kNumVoices; ++v) {
         INFO("voice " << v + 1);
@@ -185,9 +188,21 @@ TEST_CASE("Choir chord parameters expose the documented choices and defaults", "
         for (int i = 0; i < 4; ++i)
             CHECK(chord.getText(chord.convertTo0to1(static_cast<float>(i)), 32) == expectedNames[i]);
     }
-    // Voices 1-3 read choir 1, voices 4-6 choir 2.
-    for (int v = 0; v < ep::kNumVoices; ++v)
-        CHECK(std::string(ep::choirChordParamId(v)) == (v < 3 ? "choir1_chord" : "choir2_chord"));
+}
+
+TEST_CASE("Choir drift parameter exposes the documented range and default", "[plugin][params][choir][drift]")
+{
+    EthernautaAudioProcessor proc;
+    const auto& drift = param(proc, "choir_drift");
+    CHECK(drift.getNormalisableRange().start == 0.0f);
+    CHECK(drift.getNormalisableRange().end == 6.0f);
+    CHECK(drift.getNormalisableRange().interval == Catch::Approx(0.1f));
+    CHECK(drift.convertFrom0to1(drift.getDefaultValue()) == 0.0f); // off: the synth sounds as before
+    CHECK(raw(proc, "choir_drift") == 0.0f);
+    CHECK(drift.getLabel() == "ct");
+    CHECK(drift.getText(drift.convertTo0to1(2.5f), 32) == "2.5");
+    CHECK(ep::kChoirDriftMaxCents == 6.0f);
+    CHECK(ep::kChoirDriftDefaultCents == 0.0f);
 }
 
 TEST_CASE("Voice 1 parameters keep their shipped ranges and defaults", "[plugin][params]")
@@ -283,4 +298,18 @@ TEST_CASE("Editor can be created at a fixed size", "[plugin][editor]")
         CHECK(editor->getLocalBounds().contains(child->getBounds()));
     }
     CHECK(combos == ep::kNumChoirs);
+    // A drift slider joins the second row: inside the editor, clear of every panel and every selector.
+    int driftSliders = 0;
+    for (auto* child : editor->getChildren()) {
+        auto* slider = dynamic_cast<juce::Slider*>(child);
+        if (slider == nullptr || slider->getMaximum() != 6.0 || slider->getMinimum() != 0.0) continue;
+        ++driftSliders;
+        CHECK(editor->getLocalBounds().contains(slider->getBounds()));
+        for (auto* other : editor->getChildren()) {
+            if (other == child) continue;
+            if (dynamic_cast<VoicePanel*>(other) != nullptr || dynamic_cast<juce::ComboBox*>(other) != nullptr)
+                CHECK_FALSE(slider->getBounds().intersects(other->getBounds()));
+        }
+    }
+    CHECK(driftSliders == 1);
 }

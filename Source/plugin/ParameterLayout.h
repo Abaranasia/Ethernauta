@@ -1,4 +1,6 @@
 #pragma once
+#include <ethernauta/Choir.h>
+#include <ethernauta/DriftLfo.h>
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include <string>
@@ -24,7 +26,8 @@ inline constexpr float kGainParamMaxDb = 6.0f;
 // 1: four parameters per voice. 2: tuning engine (global "root", per-voice tuning/degree/octave).
 // 3: snap controls (per-voice "snap" strength, global "snap_hysteresis").
 // 4: choir tuning (extra "Choir" tuning choice, global "choir1_chord" and "choir2_chord").
-inline constexpr int kStateSchemaVersion = 4;
+// 5: choir member drift (global "choir_drift").
+inline constexpr int kStateSchemaVersion = 5;
 
 // Version hint attached to every parameter. Parameter IDs are stable strings and must never change
 // once shipped (hosts store automation against them).
@@ -33,19 +36,20 @@ inline constexpr int kParameterVersion = 1;
 inline constexpr int kTuningParameterVersion = 2;
 inline constexpr int kSnapParameterVersion = 3;
 inline constexpr int kChoirParameterVersion = 4;
+inline constexpr int kDriftParameterVersion = 5;
 
 enum class VoiceParam { Wave, Latch, Gain, Pitch, Tuning, Degree, Octave, Snap };
 
 // Parameter counts. Host automation may address parameters by index, so the layout order is
 // append-only: [wave, latch, gain, pitch] for voices 1..N (the original layout), then
 // [tuning, degree, octave] for voices 1..N, then the global [root], then [snap] for voices 1..N and
-// the global [snap_hysteresis], then the globals [choir1_chord, choir2_chord]. New parameters go at the end, never in between, and existing ones
-// are never reordered.
+// the global [snap_hysteresis], then the globals [choir1_chord, choir2_chord], then [choir_drift]. New
+// parameters go at the end, never in between, and existing ones are never reordered.
 inline constexpr int kNumBaseVoiceParams = 4;   // wave, latch, gain, pitch
 inline constexpr int kNumTuningVoiceParams = 3; // tuning, degree, octave
 inline constexpr int kNumSnapVoiceParams = 1;   // snap
 inline constexpr int kNumVoiceParams = kNumBaseVoiceParams + kNumTuningVoiceParams + kNumSnapVoiceParams;
-inline constexpr int kNumGlobalParams = 4;      // root, snap_hysteresis, choir1_chord, choir2_chord
+inline constexpr int kNumGlobalParams = 5;      // root, snap_hysteresis, choir1_chord, choir2_chord, choir_drift
 inline constexpr int kTotalParams = kNumVoices * kNumVoiceParams + kNumGlobalParams;
 
 // Stable parameter ID for a zero-based voice index: "v1_wave", "v1_latch", "v1_gain", "v1_pitch",
@@ -67,11 +71,25 @@ inline constexpr float kSnapHysteresisMaxCents = 50.0f;
 inline constexpr const char* kChoir1ChordParamId = "choir1_chord";
 inline constexpr const char* kChoir2ChordParamId = "choir2_chord";
 inline constexpr int kNumChoirs = 2;
-static_assert(kNumVoices == kNumChoirs * 3, "each choir has three voices (ethernauta::kChoirSize)");
-// Parameter ID of the chord that governs a zero-based voice index.
-inline constexpr const char* choirChordParamId(int voiceIndex) noexcept
+static_assert(kNumVoices == kNumChoirs * ethernauta::kChoirSize, "each choir has ethernauta::kChoirSize voices");
+// Chord parameter ID per choir; the choir of a zero-based voice index is voiceIndex / kChoirSize.
+inline constexpr const char* kChoirChordParamIds[kNumChoirs] = {kChoir1ChordParamId, kChoir2ChordParamId};
+
+// Choir member drift depth in cents (0..ethernauta::kMaxDriftCents, default 0 = off). Global: every
+// voice whose tuning is Choir drifts by up to +-depth cents (see DriftLfo); other tuning modes never drift.
+inline constexpr const char* kChoirDriftParamId = "choir_drift";
+inline constexpr float kChoirDriftMaxCents = static_cast<float>(ethernauta::kMaxDriftCents);
+inline constexpr float kChoirDriftDefaultCents = 0.0f;
+
+// Display names of the chord choices, in ethernauta::ChoirChord order (shared by the parameter layout
+// and the editor's selectors).
+inline constexpr const char* kChoirChordNames[ethernauta::kNumChoirChords] = {"Major", "Minor", "Septimal Minor",
+                                                                              "Supermajor"};
+inline juce::StringArray choirChordNames()
 {
-    return voiceIndex < 3 ? kChoir1ChordParamId : kChoir2ChordParamId;
+    juce::StringArray names;
+    for (const char* n : kChoirChordNames) names.add(n);
+    return names;
 }
 
 // UI/automation range of the pitch parameter (MIDI notes); the core accepts a wider range.
@@ -87,6 +105,9 @@ void addSnapParameters(juce::AudioProcessorValueTreeState::ParameterLayout& layo
 
 // Appends the two choir chord parameters (after the snap parameters, so no earlier index moves).
 void addChoirParameters(juce::AudioProcessorValueTreeState::ParameterLayout& layout);
+
+// Appends the choir drift depth (after the choir chords, so no earlier index moves).
+void addDriftParameters(juce::AudioProcessorValueTreeState::ParameterLayout& layout);
 
 // Appends the original four parameters of one voice (wave, latch, gain, pitch).
 void addVoiceBaseParameters(juce::AudioProcessorValueTreeState::ParameterLayout& layout, int voiceIndex);
