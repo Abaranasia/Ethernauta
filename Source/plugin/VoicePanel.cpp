@@ -2,6 +2,8 @@
 
 #include "ParameterLayout.h"
 
+#include <ethernauta/Tuning.h>
+#include <ethernauta/TuningEngine.h>
 #include <ethernauta/Waveform.h>
 
 namespace {
@@ -30,6 +32,17 @@ VoicePanel::VoicePanel(juce::AudioProcessorValueTreeState& apvts, int voiceIndex
     addAndMakeVisible(waveform_);
     addAndMakeVisible(latch_);
 
+    tuning_.addItemList(juce::StringArray{"Free", "12-TET", "Just", "Degree"}, 1);
+    addAndMakeVisible(tuning_);
+    for (int i = 0; i < ethernauta::kNumJustDegrees; ++i) {
+        const auto& d = ethernauta::kJustTable[i];
+        degree_.addItem(juce::String(d.num) + "/" + juce::String(d.den) + " " + d.name, i + 1);
+    }
+    addAndMakeVisible(degree_);
+    octave_.setTextBoxStyle(juce::Slider::TextBoxRight, false, 36, 20);
+    addAndMakeVisible(octave_);
+    setupCaption(*this, octaveLabel_, "Oct");
+
     gain_.setTextValueSuffix(" dB");
     addAndMakeVisible(gain_);
     pitch_.setTextValueSuffix("");
@@ -41,6 +54,9 @@ VoicePanel::VoicePanel(juce::AudioProcessorValueTreeState& apvts, int voiceIndex
     latchAttachment_ = std::make_unique<ButtonAttachment>(apvts, parameterId(voiceIndex, VoiceParam::Latch), latch_);
     gainAttachment_ = std::make_unique<SliderAttachment>(apvts, parameterId(voiceIndex, VoiceParam::Gain), gain_);
     pitchAttachment_ = std::make_unique<SliderAttachment>(apvts, parameterId(voiceIndex, VoiceParam::Pitch), pitch_);
+    tuningAttachment_ = std::make_unique<ComboAttachment>(apvts, parameterId(voiceIndex, VoiceParam::Tuning), tuning_);
+    degreeAttachment_ = std::make_unique<ComboAttachment>(apvts, parameterId(voiceIndex, VoiceParam::Degree), degree_);
+    octaveAttachment_ = std::make_unique<SliderAttachment>(apvts, parameterId(voiceIndex, VoiceParam::Octave), octave_);
 }
 
 void VoicePanel::paint(juce::Graphics& g)
@@ -57,6 +73,15 @@ void VoicePanel::resized()
     waveform_.setBounds(area.removeFromTop(26));
     area.removeFromTop(6);
     latch_.setBounds(area.removeFromTop(28));
+    area.removeFromTop(8);
+
+    tuning_.setBounds(area.removeFromTop(26));
+    area.removeFromTop(4);
+    degree_.setBounds(area.removeFromTop(26));
+    area.removeFromTop(4);
+    auto octaveRow = area.removeFromTop(24);
+    octaveLabel_.setBounds(octaveRow.removeFromLeft(30));
+    octave_.setBounds(octaveRow);
     area.removeFromTop(8);
 
     auto pitchArea = area.removeFromBottom(120);

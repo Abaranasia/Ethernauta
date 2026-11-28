@@ -23,6 +23,24 @@ inline std::vector<std::string> expectedIds(int numVoices)
     return ids;
 }
 
+// Parameters added with the tuning engine (state schema 2): the global "root" plus three per voice.
+inline std::vector<std::string> expectedTuningIds(int numVoices)
+{
+    std::vector<std::string> ids{"root"};
+    for (int v = 1; v <= numVoices; ++v)
+        for (const char* suffix : {"tuning", "degree", "octave"})
+            ids.push_back("v" + std::to_string(v) + "_" + suffix);
+    return ids;
+}
+
+inline std::vector<std::string> allExpectedIds(int numVoices)
+{
+    auto ids = expectedIds(numVoices);
+    const auto extra = expectedTuningIds(numVoices);
+    ids.insert(ids.end(), extra.begin(), extra.end());
+    return ids;
+}
+
 inline juce::RangedAudioParameter& param(EthernautaAudioProcessor& p, const std::string& id)
 {
     auto* rp = dynamic_cast<juce::RangedAudioParameter*>(p.getValueTreeState().getParameter(id));

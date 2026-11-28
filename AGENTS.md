@@ -17,5 +17,5 @@ Project-scoped skills under `.claude/skills/`, applied automatically by trigger 
 ## Architecture rules
 
 - `Source/core` (`ethernauta_core`) is JUCE-free C++17 and real-time safe (no allocation, locks or exceptions in process paths). It is guarded by a configure-time check and the `core_links_no_juce` test.
-- `Source/plugin` is the only place that may use JUCE. Parameter IDs are stable strings (`v<N>_wave`, `v<N>_latch`, `v<N>_gain`, `v<N>_pitch`) and must never change once shipped.
+- `Source/plugin` is the only place that may use JUCE. Parameter IDs are stable strings (`v<N>_wave`, `v<N>_latch`, `v<N>_gain`, `v<N>_pitch`, `v<N>_tuning`, `v<N>_degree`, `v<N>_octave`, global `root`) and must never change once shipped.
 - Write the failing test first (strict TDD) for every change to the core.

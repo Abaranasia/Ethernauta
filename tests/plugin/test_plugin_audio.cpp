@@ -207,3 +207,143 @@ TEST_CASE("Mono output buffers are supported", "[plugin][audio]")
     }
     CHECK(loudest > 0.01f);
 }
+
+// ---- Tuning engine wiring -------------------------------------------------------------------
+
+namespace {
+enum Tuning { kFree = 0, kEqualTempered = 1, kJust = 2, kDegree = 3 };
+
+struct StackEntry {
+    int degree;
+    int octave;
+    double ratio; // expected frequency / root
+};
+
+// Degrees 1/1, 3/2, 2/1, 5/4 (+1 oct), 7/4, 9/8 (+2 oct): one entry per voice.
+constexpr StackEntry kStack[] = {{0, 0, 1.0},  {10, 0, 1.5},  {16, 0, 2.0},
+                                 {6, 1, 2.5},  {13, 0, 1.75}, {3, 2, 4.5}};
+static_assert(sizeof(kStack) / sizeof(kStack[0]) == ep::kNumVoices, "one stack entry per voice");
+
+void configureStack(EthernautaAudioProcessor& p)
+{
+    for (int v = 0; v < ep::kNumVoices; ++v) {
+        setPlain(p, voiceId(v, "tuning"), static_cast<float>(kDegree));
+        setPlain(p, voiceId(v, "degree"), static_cast<float>(kStack[v].degree));
+        setPlain(p, voiceId(v, "octave"), static_cast<float>(kStack[v].octave));
+    }
+}
+
+// Fundamental of voice `voice` alone (others stay unlatched), measured after the glide has settled.
+double measureVoice(EthernautaAudioProcessor& p, int voice, double sr, int total = 48000)
+{
+    latch(p, voice);
+    prepare(p, sr, 512);
+    const auto out = render(p, total, 512);
+    return estimateFrequencyHz(out.left, sr, 4800);
+}
+} // namespace
+
+TEST_CASE("A Just-degree stack plays root * ratio on every voice", "[plugin][audio][tuning]")
+{
+    constexpr double sr = 48000.0;
+    for (const float rootNote : {45.0f, 50.0f, 38.0f}) {
+        std::vector<double> measured;
+        for (int v = 0; v < ep::kNumVoices; ++v) {
+            EthernautaAudioProcessor p;
+            setPlain(p, "root", rootNote);
+            configureStack(p);
+            const double hz = measureVoice(p, v, sr);
+            measured.push_back(hz);
+            INFO("root " << rootNote << " voice " << v + 1 << " measured " << hz);
+            CHECK(hz == Catch::Approx(midiNoteToHz(rootNote) * kStack[v].ratio).epsilon(1e-3));
+        }
+        // Coherence: pairwise ratios are the table ratios, whatever the root.
+        for (int i = 0; i < ep::kNumVoices; ++i)
+            for (int j = 0; j < ep::kNumVoices; ++j)
+                CHECK(measured[static_cast<std::size_t>(i)] / measured[static_cast<std::size_t>(j)]
+                      == Catch::Approx(kStack[i].ratio / kStack[j].ratio).epsilon(2e-3));
+    }
+}
+
+TEST_CASE("Changing the root retunes every voice while sounding", "[plugin][audio][tuning]")
+{
+    constexpr double sr = 48000.0;
+    std::vector<double> before, after;
+    for (int v = 0; v < ep::kNumVoices; ++v) {
+        EthernautaAudioProcessor p;
+        configureStack(p);
+        latch(p, v);
+        prepare(p, sr, 512);
+        const auto first = render(p, 24000, 512);
+        before.push_back(estimateFrequencyHz(first.left, sr, 4800));
+
+        setPlain(p, "root", 52.0f); // 45 -> 52: a 3/2-ish jump up, glided
+        const auto second = render(p, 48000 * 2, 512);
+        after.push_back(estimateFrequencyHz(second.left, sr, 48000));
+
+        INFO("voice " << v + 1);
+        CHECK(before.back() == Catch::Approx(midiNoteToHz(45.0) * kStack[v].ratio).epsilon(1e-3));
+        CHECK(after.back() == Catch::Approx(midiNoteToHz(52.0) * kStack[v].ratio).epsilon(1e-3));
+        CHECK(after.back() / before.back() == Catch::Approx(midiNoteToHz(52.0) / midiNoteToHz(45.0)).epsilon(2e-3));
+    }
+}
+
+TEST_CASE("Just mode snaps the pitch parameter to the root's pure ratio", "[plugin][audio][tuning]")
+{
+    constexpr double sr = 48000.0;
+    const double root = midiNoteToHz(45.0);
+    for (int v = 0; v < ep::kNumVoices; ++v) {
+        // Pitch 49 is a 12-TET major third above the root (45): Just snaps it to 5/4, 12-TET keeps it.
+        auto measureMode = [&](Tuning mode) {
+            EthernautaAudioProcessor p;
+            setPlain(p, voiceId(v, "pitch"), 49.0f);
+            setPlain(p, voiceId(v, "tuning"), static_cast<float>(mode));
+            return measureVoice(p, v, sr);
+        };
+        const double just = measureMode(kJust);
+        const double tet = measureMode(kEqualTempered);
+        const double free = measureMode(kFree);
+        INFO("voice " << v + 1);
+        CHECK(just == Catch::Approx(root * 1.25).epsilon(1e-3));
+        CHECK(tet == Catch::Approx(midiNoteToHz(49.0)).epsilon(1e-3));
+        CHECK(free == Catch::Approx(midiNoteToHz(49.0)).epsilon(1e-3));
+        CHECK(std::fabs(just - tet) > 1.0);
+    }
+}
+
+TEST_CASE("Free mode ignores the root, degree and octave parameters", "[plugin][audio][tuning]")
+{
+    auto renderWith = [](bool disturb) {
+        EthernautaAudioProcessor p;
+        latch(p, 0);
+        if (disturb) {
+            setPlain(p, "root", 70.0f);
+            setPlain(p, voiceId(0, "degree"), 20.0f);
+            setPlain(p, voiceId(0, "octave"), 3.0f);
+        }
+        prepare(p, 48000.0, 256);
+        return render(p, 9600, 256);
+    };
+    const auto baseline = renderWith(false);
+    REQUIRE(rms(baseline.left, 4800) > 0.01);
+    CHECK(bitEqual(renderWith(true).left, baseline.left));
+}
+
+TEST_CASE("Tuned output with a mid-render root change is identical for every block size", "[plugin][audio][tuning][determinism]")
+{
+    constexpr int kSegment = 4096 * 2;
+    std::vector<std::vector<float>> results;
+    for (const int block : kBlocks) {
+        EthernautaAudioProcessor p;
+        configureStack(p);
+        for (int v = 0; v < ep::kNumVoices; ++v) latch(p, v);
+        prepare(p, 48000.0, block);
+        auto all = render(p, kSegment, block).left;
+        setPlain(p, "root", 50.0f);
+        const auto second = render(p, kSegment, block).left;
+        all.insert(all.end(), second.begin(), second.end());
+        results.push_back(std::move(all));
+    }
+    REQUIRE(rms(results[0], 0) > 0.01);
+    for (std::size_t i = 1; i < results.size(); ++i) REQUIRE(bitEqual(results[i], results[0]));
+}

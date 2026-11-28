@@ -87,7 +87,7 @@ Beating between near-unison or near-ratio voices [DERIVED, standard]:
 | Syntonic comma | 81/80 | 21.51 [S32] | n/a |
 | Minor second (diatonic semitone) | 16/15 | 111.73 | +11.73 |
 | Major second | 9/8 | 203.91 | +3.91 |
-| Minor seventh-ish whole tone | 10/9 | 182.40 | -17.60 |
+| Minor seventh-ish whole tone (sic: 10/9 is the minor whole tone, not a seventh) | 10/9 | 182.40 | -17.60 |
 | Septimal minor third | 7/6 | 266.87 | -33.13 |
 | Minor third | 6/5 | 315.64 | +15.64 |
 | Major third | 5/4 | 386.31 [S32] | -13.69 |
@@ -101,6 +101,8 @@ Beating between near-unison or near-ratio voices [DERIVED, standard]:
 | Minor seventh | 9/5 | 1017.60 | +17.60 |
 | Major seventh | 15/8 | 1088.27 | -11.73 |
 | Octave | 2/1 | 1200 | 0 |
+
+Note: rows are not sorted by cents (10/9 at 182.40 sits below 9/8 at 203.91). All ratio/cents/deviation values were re-computed and match; only the 10/9 label was wrong. The implementation (`Tuning.h`) sorts by cents and verifies cached cents against num/den in tests.
 
 Compute them at startup from the rational, do not hard-code cents. Chord stacks from a root (all over the root, octave-reduced as needed):
 

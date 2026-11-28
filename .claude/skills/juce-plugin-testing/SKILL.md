@@ -43,11 +43,11 @@ Which rules are met in this repo today (update when it changes).
 
 | Rule | State |
 |---|---|
-| DSP unit tests for the core (Catch2) | Satisfied: oscillator, smoother, gate, voice, master stage |
+| DSP unit tests for the core (Catch2) | Satisfied: oscillator, smoother, gate, voice, master stage, tuning math/table/engine, voice glide |
 | Multiple block sizes (1, 7, 512, 4096) and sample rates (44100/48000/96000) | Satisfied in core and plugin tests; block-size output is bit-identical |
 | Silent-state tests (idle voice, release to exact silence, no latched voice) | Satisfied |
 | Parameter state round-trip for every parameter of every voice | Satisfied (`tests/plugin`, opt-in `ETHERNAUTA_BUILD_PLUGIN=ON`) |
-| Malformed/foreign state, stable parameter IDs, layout defaults/ranges | Satisfied (`tests/plugin`) |
+| Malformed/foreign state, stable parameter IDs, layout defaults/ranges | Satisfied (`tests/plugin`), including the tuning parameters and schema-1 migration |
 | Output bounded with six voices at full gain | Satisfied (core and plugin tests) |
 | Feedback-stability test | Not applicable yet: no regenerative path exists |
 | Relative CPU budget (real-time factor, Release build) | Pending: no test written |

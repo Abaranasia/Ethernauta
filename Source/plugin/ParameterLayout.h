@@ -21,22 +21,33 @@ inline constexpr float defaultPitchNote(int voiceIndex) noexcept { return kDefau
 inline constexpr float kGainParamMaxDb = 6.0f;
 
 // Bump when the saved state layout changes, and add a migration branch in setStateInformation.
-inline constexpr int kStateSchemaVersion = 1;
+// 1: four parameters per voice. 2: tuning engine (global "root", per-voice tuning/degree/octave).
+inline constexpr int kStateSchemaVersion = 2;
 
 // Version hint attached to every parameter. Parameter IDs are stable strings and must never change
 // once shipped (hosts store automation against them).
 inline constexpr int kParameterVersion = 1;
+// Parameters added after the first release carry a higher hint (used by AU hosts).
+inline constexpr int kTuningParameterVersion = 2;
 
-enum class VoiceParam { Wave, Latch, Gain, Pitch };
+enum class VoiceParam { Wave, Latch, Gain, Pitch, Tuning, Degree, Octave };
 
-// Stable parameter ID for a zero-based voice index: "v1_wave", "v1_latch", "v1_gain", "v1_pitch", ...
+// Stable parameter ID for a zero-based voice index: "v1_wave", "v1_latch", "v1_gain", "v1_pitch",
+// "v1_tuning", "v1_degree", "v1_octave", ...
 std::string parameterId(int voiceIndex, VoiceParam which);
+
+// Global tuning root (MIDI note, whole notes, same range as the voice pitch).
+inline constexpr const char* kRootParamId = "root";
+inline constexpr float kRootDefaultNote = 45.0f; // A2 = 110 Hz
 
 // UI/automation range of the pitch parameter (MIDI notes); the core accepts a wider range.
 inline constexpr float kPitchMinNote = 12.0f;
 inline constexpr float kPitchMaxNote = 96.0f;
 
-// Appends the four parameters of one voice. Called in a loop over voices by createParameterLayout().
+// Appends the global parameters (currently only the tuning root).
+void addGlobalParameters(juce::AudioProcessorValueTreeState::ParameterLayout& layout);
+
+// Appends the seven parameters of one voice. Called in a loop over voices by createParameterLayout().
 void addVoiceParameters(juce::AudioProcessorValueTreeState::ParameterLayout& layout, int voiceIndex);
 
 juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
