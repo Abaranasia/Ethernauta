@@ -3,6 +3,7 @@
 
 #include "PluginTestUtils.h"
 
+#include <cmath>
 #include <cstring>
 
 using namespace plugintest;
@@ -517,9 +518,15 @@ TEST_CASE("Drifting Choir output is identical for every block size", "[plugin][a
 
 TEST_CASE("Leaving Choir mode switches the drift off for that voice", "[plugin][audio][choir][drift]")
 {
-    // After the 0.25 s depth ramp the voice is a plain Free voice again, so its measured frequency is
-    // exactly the pitch parameter's (A2 = 110 Hz) rather than a drifting one.
+    // Once the depth smoother has fully snapped to 0 the voice is a plain Free voice again, so its
+    // measured frequency is exactly the pitch parameter's (A2 = 110 Hz) rather than a drifting one.
+    // Measure only after the snap: the depth decays as 6 * exp(-t / tau) until it is below the
+    // smoother's snap epsilon, i.e. t = tau * ln(6 / epsilon) (constants of DroneVoice / ParamSmoother).
     constexpr double sr = 48000.0;
+    constexpr double tau = 0.25;      // drift depth smoothing time constant, seconds
+    constexpr double snapEps = 1.0e-7; // ParamSmoother::kSnapEpsilon, cents
+    const double snapSeconds = tau * std::log(6.0 / snapEps);          // about 4.5 s
+    const int settleSamples = static_cast<int>((snapSeconds + 1.0) * sr); // plus 1 s margin
     EthernautaAudioProcessor p;
     setPlain(p, "choir_drift", 6.0f);
     setPlain(p, voiceId(0, "tuning"), 4.0f);
@@ -527,7 +534,8 @@ TEST_CASE("Leaving Choir mode switches the drift off for that voice", "[plugin][
     prepare(p, sr, 512);
     render(p, 48000, 512);
     setPlain(p, voiceId(0, "tuning"), 0.0f); // Free
-    render(p, 48000 * 3, 512);               // glide and depth ramp are long finished
+    render(p, settleSamples, 512);           // glide finished and depth fully snapped to 0
     const auto out = render(p, 48000, 512);
-    CHECK(estimateFrequencyHz(out.left, sr) == Catch::Approx(midiNoteToHz(45.0)).epsilon(1e-5));
+    // 1e-7 relative is 1.7e-4 cents: a residual drift of 0.001 cent (5.8e-7) would fail.
+    CHECK(estimateFrequencyHz(out.left, sr) == Catch::Approx(midiNoteToHz(45.0)).epsilon(1e-7));
 }

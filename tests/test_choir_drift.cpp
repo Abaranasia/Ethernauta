@@ -66,6 +66,24 @@ double maxAbs(const std::vector<double>& v)
     return m;
 }
 
+// Number of voices with distinct drift rates; indices beyond reuse index % kNumDistinctVoices (documented
+// in DriftLfo.cpp). The plugin itself only uses voices 0..5.
+constexpr int kNumDistinctVoices = 8;
+constexpr int kNumPluginVoices = 6;
+
+// Single-sample renders that count the rendered sounding samples independently of the voice: a call that
+// starts while the voice is active renders (and clocks) exactly one drift sample. Appends the offset after
+// each call to `offsets` when given.
+void renderCounted(DroneVoice& v, int samples, std::uint64_t& count, std::vector<double>* offsets = nullptr)
+{
+    float sink = 0.0f;
+    for (int i = 0; i < samples; ++i) {
+        if (v.isActive()) ++count;
+        v.process(&sink, 1);
+        if (offsets != nullptr) offsets->push_back(offsetCents(v));
+    }
+}
+
 bool bitEqual(const std::vector<float>& a, const std::vector<float>& b)
 {
     return a.size() == b.size() && std::memcmp(a.data(), b.data(), a.size() * sizeof(float)) == 0;
@@ -95,25 +113,58 @@ TEST_CASE("DriftLfo stays within [-1, 1] and is finite over a long run", "[drift
 
 TEST_CASE("DriftLfo components are slow, incommensurate and differ per voice", "[drift][lfo]")
 {
-    std::vector<DriftLfo> lfos(6);
-    for (int i = 0; i < 6; ++i) {
+    std::vector<DriftLfo> lfos(static_cast<std::size_t>(kNumDistinctVoices));
+    for (int i = 0; i < kNumDistinctVoices; ++i) {
         lfos[static_cast<std::size_t>(i)].setVoiceIndex(i);
         lfos[static_cast<std::size_t>(i)].prepare(48000.0);
     }
+    // Relative distance of ratio r to the nearest p/q with q <= 20 (the beat pattern of the two
+    // components would repeat after about q periods when r is close to such a fraction).
+    auto nearestSimpleRatio = [](double r) {
+        double best = 1e9;
+        for (int q = 1; q <= 20; ++q)
+            for (int p = 1; p <= 2 * q; ++p) {
+                const double f = static_cast<double>(p) / static_cast<double>(q);
+                best = std::min(best, std::fabs(r - f) / f);
+            }
+        return best;
+    };
     for (std::size_t i = 0; i < lfos.size(); ++i) {
         INFO("voice " << i);
         for (const double r : {lfos[i].rateAHz(), lfos[i].rateBHz()}) {
             CHECK(r >= 0.05);
             CHECK(r <= 0.2);
         }
-        // The two components of a voice never share a rate (or an integer ratio below 1000 periods).
+        // The two components of a voice never share a rate and are not (near) a small integer ratio.
         CHECK(std::fabs(lfos[i].rateAHz() - lfos[i].rateBHz()) > 0.01);
+        const double ratio = lfos[i].rateAHz() / lfos[i].rateBHz();
+        // Voices 0..5 (the ones the plugin uses): at least 1e-3 relative away from every p/q, q <= 20.
+        // Voices 6 and 7 are weaker: voice 7 sits 3.7e-4 from 7:10, so only 3e-4 is guaranteed there.
+        const double need = i < static_cast<std::size_t>(kNumPluginVoices) ? 1e-3 : 3e-4;
+        CHECK(nearestSimpleRatio(ratio) > need);
         for (std::size_t j = i + 1; j < lfos.size(); ++j) {
+            INFO("voices " << i << " and " << j);
             CHECK(lfos[i].rateAHz() != lfos[j].rateAHz());
             CHECK(lfos[i].rateBHz() != lfos[j].rateBHz());
             CHECK(lfos[i].phaseA() != lfos[j].phaseA());
+            CHECK(lfos[i].phaseB() != lfos[j].phaseB());
         }
     }
+    // Beyond the distinct voices the rates and phases wrap (index % 8); a negative index is voice 0.
+    for (int k = 0; k < kNumDistinctVoices; ++k) {
+        DriftLfo wrapped;
+        wrapped.setVoiceIndex(k + kNumDistinctVoices);
+        const DriftLfo& base = lfos[static_cast<std::size_t>(k)];
+        INFO("voice " << k + kNumDistinctVoices << " wraps to " << k);
+        CHECK(wrapped.rateAHz() == base.rateAHz());
+        CHECK(wrapped.rateBHz() == base.rateBHz());
+        CHECK(wrapped.phaseA() == base.phaseA());
+        CHECK(wrapped.phaseB() == base.phaseB());
+    }
+    DriftLfo negative;
+    negative.setVoiceIndex(-5);
+    CHECK(negative.rateAHz() == lfos[0].rateAHz());
+    CHECK(negative.phaseB() == lfos[0].phaseB());
 }
 
 TEST_CASE("DriftLfo value is the mean of two sines at its published rates and phases", "[drift][lfo]")
@@ -212,7 +263,7 @@ TEST_CASE("Drift depth is clamped to the maximum and ignores non-finite values",
 TEST_CASE("Different voices drift differently", "[drift][voice]")
 {
     std::vector<std::vector<double>> series;
-    for (int voice = 0; voice < 6; ++voice) {
+    for (int voice = 0; voice < kNumDistinctVoices; ++voice) {
         auto v = makeVoice(48000.0, voice, 6.0f);
         series.push_back(offsetSeries(v, 48000 * 10));
     }
@@ -379,4 +430,148 @@ TEST_CASE("reset restarts the drift clock", "[drift][voice]")
     const auto again = offsetSeries(v, 2000);
     REQUIRE(first.size() == again.size());
     for (std::size_t i = 0; i < first.size(); ++i) REQUIRE(first[i] == again[i]);
+}
+
+TEST_CASE("The drift clock continues where it stopped on a relatch", "[drift][voice]")
+{
+    constexpr double sr = 48000.0;
+    constexpr float depth = 6.0f;
+    constexpr int voice = 2;
+    auto v = makeVoice(sr, voice, depth);
+    std::uint64_t count = 0;
+    renderCounted(v, 150000, count);
+    v.setLatched(false);
+    renderCounted(v, 48000, count); // past the 0.3 s release: the voice goes idle
+    REQUIRE_FALSE(v.isActive());
+    REQUIRE(count > 150000);
+
+    DriftLfo ref;
+    ref.setVoiceIndex(voice);
+    ref.prepare(sr);
+    const double d = static_cast<double>(depth);
+    // The test is only meaningful if "continued" and "restarted" are far apart in the offset.
+    REQUIRE(std::fabs(d * ref.at(count) - d * ref.at(0)) > 0.5);
+
+    const std::uint64_t preserved = count;
+    v.setLatched(true);
+    REQUIRE(v.isActive());
+    std::vector<double> offsets;
+    renderCounted(v, 2000, count, &offsets);
+    for (std::size_t i = 0; i < offsets.size(); ++i) {
+        INFO("sample " << i << " after relatch");
+        REQUIRE(offsets[i] == Catch::Approx(d * ref.at(preserved + i)).margin(1e-6)); // cents
+    }
+}
+
+TEST_CASE("Re-preparing at a new sample rate restarts the clock and rescales the LFO", "[drift][voice]")
+{
+    constexpr int voice = 2;
+    constexpr double depth = 6.0;
+    // Independent LFO value in cents at time t seconds: published rates and phases, no DriftLfo::at().
+    DriftLfo rates;
+    rates.setVoiceIndex(voice);
+    auto expectedCents = [&](double t) {
+        constexpr double twoPi = 2.0 * kPi;
+        return depth * 0.5
+               * (std::sin(rates.phaseA() + twoPi * rates.rateAHz() * t) + std::sin(rates.phaseB() + twoPi * rates.rateBHz() * t));
+    };
+    struct Pair { double from; double to; };
+    double atOneSecond[2] = {0.0, 0.0};
+    int pairIndex = 0;
+    for (const Pair pr : {Pair{48000.0, 44100.0}, Pair{44100.0, 48000.0}}) {
+        INFO("from " << pr.from << " to " << pr.to);
+        auto v = makeVoice(pr.from, voice, static_cast<float>(depth));
+        std::uint64_t old = 0;
+        renderCounted(v, static_cast<int>(pr.from) * 2, old);
+        // Meaningful only if a clock that kept running would be far from a restarted one.
+        REQUIRE(std::fabs(expectedCents(static_cast<double>(old) / pr.from) - expectedCents(0.0)) > 0.5);
+
+        v.prepare(pr.to);
+        REQUIRE(v.isActive());
+        const int toRate = static_cast<int>(pr.to);
+        const auto offsets = offsetSeries(v, toRate * 10 + 1);
+        for (const int n : {0, toRate, toRate * 10}) { // 0 s, 1 s, 10 s after the re-prepare
+            INFO("sample " << n);
+            CHECK(offsets[static_cast<std::size_t>(n)] == Catch::Approx(expectedCents(static_cast<double>(n) / pr.to)).margin(1e-6));
+        }
+        atOneSecond[pairIndex++] = offsets[static_cast<std::size_t>(toRate)];
+    }
+    // The same elapsed time gives the same offset at both rates: the period in seconds is rate independent.
+    CHECK(atOneSecond[0] == Catch::Approx(atOneSecond[1]).margin(1e-6));
+    CHECK(std::fabs(atOneSecond[0]) > 0.05);
+}
+
+TEST_CASE("A depth set while idle applies at once on the relatch and follows the preserved clock", "[drift][voice]")
+{
+    constexpr double sr = 48000.0;
+    constexpr int voice = 2;
+    constexpr float depth = 3.0f;
+    auto v = makeVoice(sr, voice, 0.0f); // no drift yet; the clock still counts the sounding samples
+    std::uint64_t count = 0;
+    renderCounted(v, 20000, count);
+    v.setLatched(false);
+    renderCounted(v, 48000, count);
+    REQUIRE_FALSE(v.isActive());
+
+    v.setDriftDepth(depth);
+    CHECK(v.frequencyHz() == v.targetFrequencyHz());
+    v.setLatched(true);
+    REQUIRE(v.isActive());
+
+    DriftLfo ref;
+    ref.setVoiceIndex(voice);
+    ref.prepare(sr);
+    const double d = static_cast<double>(depth);
+    const std::uint64_t preserved = count;
+    // A ramp from zero would be tiny at the start; the snapped depth must already be near full size.
+    REQUIRE(std::fabs(d * ref.at(preserved)) > 0.3);
+
+    std::vector<double> offsets;
+    renderCounted(v, static_cast<int>(sr) * 2, count, &offsets);
+    CHECK(maxAbs(offsets) <= d + 1e-9);
+    for (std::size_t i = 0; i < offsets.size(); ++i) {
+        INFO("sample " << i << " after relatch");
+        REQUIRE(offsets[i] == Catch::Approx(d * ref.at(preserved + i)).margin(1e-6));
+    }
+}
+
+TEST_CASE("Depth 0 glide matches an independent one-pole in the cents domain", "[drift][voice]")
+{
+    // Reference for the pre-drift frequency path as documented in DroneVoice.h: a one-pole of
+    // kGlideSeconds on 1200 * log2(Hz), one step per sample. Not bit-exact by design (the voice snaps to
+    // the target below 1e-6 cents), so compare with a tight relative tolerance (1e-9 = 1.7e-6 cents).
+    for (const double sr : testutil::kRates) {
+        INFO("sample rate " << sr);
+        DroneVoice v;
+        v.prepare(sr);
+        v.setDriftVoiceIndex(5);
+        v.setDriftDepth(0.0f);
+        v.setParams(sineParams(45.0f));
+        float sink = 0.0f;
+        for (int i = 0; i < 4800; ++i) v.process(&sink, 1);
+
+        const double fromHz = v.targetFrequencyHz();
+        v.setPitch(52.0f);
+        const double toHz = 440.0 * std::exp2((52.0 - 69.0) / 12.0);
+        REQUIRE(v.targetFrequencyHz() == Catch::Approx(toHz).epsilon(1e-9));
+
+        const double targetCents = 1200.0 * std::log2(v.targetFrequencyHz());
+        double cents = 1200.0 * std::log2(fromHz);
+        const double coeff = 1.0 - std::exp(-1.0 / (DroneVoice::kGlideSeconds * sr));
+        double worst = 0.0;
+        double largestMove = 0.0;
+        for (int i = 0; i < static_cast<int>(sr * 3.0); ++i) {
+            v.process(&sink, 1);
+            cents += (targetCents - cents) * coeff;
+            const double want = std::exp2(cents / 1200.0);
+            worst = std::max(worst, std::fabs(v.frequencyHz() / want - 1.0));
+            largestMove = std::max(largestMove, std::fabs(want / fromHz - 1.0));
+        }
+        CHECK(worst < 1e-9);
+        CHECK(largestMove > 0.1); // the glide really covered the retune (7 semitones is +50%)
+
+        // The oscillator really follows: the rendered audio ends up at the new target.
+        const auto audio = testutil::render(v, static_cast<int>(sr), 512);
+        CHECK(testutil::estimateFrequency(audio, sr) == Catch::Approx(toHz).epsilon(1e-4));
+    }
 }
