@@ -65,7 +65,28 @@ inline double keyHz(TuningMode mode, long long key, int octaveOffset, double roo
 
 void TuningEngine::reset() noexcept
 {
+    adoptPending();
     for (auto& m : memory_) m = Memory{};
+}
+
+void TuningEngine::setSnapCandidates(const SnapCandidates& candidates) noexcept
+{
+    slots_[writeIdx_] = candidates; // the writer owns this slot; nobody else can touch it
+    // release: the slot contents become visible to the reader's acquire exchange. acquire: the slot
+    // handed back was released by the reader (it finished with it), so overwriting it later is safe.
+    writeIdx_ = mailbox_.exchange(writeIdx_ | kDirty, std::memory_order_acq_rel) & kIdxMask;
+}
+
+void TuningEngine::adoptPending() noexcept
+{
+    // Cheap per-call check. relaxed is enough: it only decides whether to take the slow path; a stale
+    // "clean" just defers adoption to the next call, and the data is acquired by the exchange below.
+    // Run once per call (not per block) because targetHz() is called per voice; the first call after a
+    // publication adopts and clears all voices' memory, so later calls see a clean flag and do nothing.
+    if ((mailbox_.load(std::memory_order_relaxed) & kDirty) == 0) return;
+    // acquire: see the writer's slot contents. release: hand our old slot back, finished with.
+    readIdx_ = mailbox_.exchange(readIdx_, std::memory_order_acq_rel) & kIdxMask;
+    for (auto& m : memory_) m = Memory{}; // old keys name different grid points under the new set
 }
 
 void TuningEngine::setRoot(double midiNote, double cents) noexcept
@@ -77,11 +98,13 @@ void TuningEngine::setRoot(double midiNote, double cents) noexcept
 
 double TuningEngine::targetHz(int voice, const VoiceTuning& tuning, double freeHz) noexcept
 {
+    adoptPending();
     const double f = sanitizeHz(freeHz);
     if (voice < 0 || voice >= kMaxVoices) return f;
 
     Memory& mem = memory_[voice];
     const int octave = clampTo(tuning.octave, kMinOctaveOffset, kMaxOctaveOffset);
+    const SnapCandidates& candidates = slots_[readIdx_]; // fixed for this call: only adoptPending() moves it
 
     switch (tuning.mode) {
         case TuningMode::Degree: {
@@ -91,21 +114,21 @@ double TuningEngine::targetHz(int voice, const VoiceTuning& tuning, double freeH
         }
         case TuningMode::Just: {
             const double cents = ratioToCents(f / rootHz_);
-            if (candidates_.size() == 0) {
+            if (candidates.size() == 0) {
                 mem.mode = TuningMode::Just;
                 return sanitizeHz(f * std::exp2(static_cast<double>(octave)));
             }
             SnapState state;
             state.valid = mem.mode == TuningMode::Just;
             state.key = mem.key;
-            const long long key = selectSnapKey(candidates_, state, cents, tuning.snapHysteresisCents);
+            const long long key = selectSnapKey(candidates, state, cents, tuning.snapHysteresisCents);
             mem.mode = TuningMode::Just;
             mem.key = key;
             const double s = tuning.snapStrength > 0.0 ? (tuning.snapStrength < 1.0 ? tuning.snapStrength : 1.0) : 0.0;
             if (s <= 0.0) return sanitizeHz(f * std::exp2(static_cast<double>(octave)));
             if (s >= 1.0)
-                return rootHz_ * candidates_.keyRatio(key) * std::exp2(static_cast<double>(octave));
-            const double snapped = cents + s * (candidates_.keyCents(key) - cents);
+                return rootHz_ * candidates.keyRatio(key) * std::exp2(static_cast<double>(octave));
+            const double snapped = cents + s * (candidates.keyCents(key) - cents);
             return sanitizeHz(rootHz_ * std::exp2(snapped / 1200.0 + static_cast<double>(octave)));
         }
         case TuningMode::EqualTempered: {

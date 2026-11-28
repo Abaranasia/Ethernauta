@@ -4,6 +4,7 @@
 #include "PluginTestUtils.h"
 #include "VoicePanel.h"
 
+#include <ethernauta/JustSnap.h>
 #include <ethernauta/Tuning.h>
 #include <ethernauta/VoiceParams.h>
 
@@ -36,6 +37,9 @@ TEST_CASE("Parameter order is append-only so index-based host automation survive
     for (int v = 0; v < ep::kNumVoices; ++v)
         for (const char* suffix : {"tuning", "degree", "octave"}) expected.push_back(voiceId(v, suffix));
     expected.push_back(ep::kRootParamId);
+    // Then the snap controls (appended after the globals so no earlier index moves).
+    for (int v = 0; v < ep::kNumVoices; ++v) expected.push_back(voiceId(v, "snap"));
+    expected.push_back(ep::kSnapHysteresisParamId);
     REQUIRE(expected.size() == static_cast<std::size_t>(ep::kTotalParams));
 
     for (int i = 0; i < params.size(); ++i) {
@@ -71,8 +75,10 @@ TEST_CASE("Every voice has its stable parameter IDs", "[plugin][params]")
         CHECK(ep::parameterId(v, ep::VoiceParam::Tuning) == voiceId(v, "tuning"));
         CHECK(ep::parameterId(v, ep::VoiceParam::Degree) == voiceId(v, "degree"));
         CHECK(ep::parameterId(v, ep::VoiceParam::Octave) == voiceId(v, "octave"));
+        CHECK(ep::parameterId(v, ep::VoiceParam::Snap) == voiceId(v, "snap"));
     }
     CHECK(std::string(ep::kRootParamId) == "root");
+    CHECK(std::string(ep::kSnapHysteresisParamId) == "snap_hysteresis");
 }
 
 TEST_CASE("Tuning parameters expose the documented ranges and defaults", "[plugin][params][tuning]")
@@ -108,6 +114,56 @@ TEST_CASE("Tuning parameters expose the documented ranges and defaults", "[plugi
         CHECK(octave.getNormalisableRange().end == 3.0f);
         CHECK(octave.convertFrom0to1(octave.getDefaultValue()) == 0.0f);
     }
+}
+
+TEST_CASE("Existing parameters keep their IDs at their original indices", "[plugin][params][order]")
+{
+    // The frozen shipped contract, written out literally (not derived from the layout code).
+    std::vector<std::string> shipped;
+    for (int v = 1; v <= 6; ++v)
+        for (const char* suffix : {"wave", "latch", "gain", "pitch"})
+            shipped.push_back("v" + std::to_string(v) + "_" + suffix);
+    for (int v = 1; v <= 6; ++v)
+        for (const char* suffix : {"tuning", "degree", "octave"})
+            shipped.push_back("v" + std::to_string(v) + "_" + suffix);
+    shipped.push_back("root");
+    REQUIRE(shipped.size() == 43);
+
+    EthernautaAudioProcessor proc;
+    const auto& params = proc.getParameters();
+    REQUIRE(static_cast<std::size_t>(params.size()) >= shipped.size());
+    for (std::size_t i = 0; i < shipped.size(); ++i) {
+        const auto* withId = dynamic_cast<juce::HostedAudioProcessorParameter*>(params[static_cast<int>(i)]);
+        REQUIRE(withId != nullptr);
+        INFO("index " << i);
+        CHECK(withId->getParameterID().toStdString() == shipped[i]);
+    }
+}
+
+TEST_CASE("Snap parameters expose the documented ranges and defaults", "[plugin][params][snap]")
+{
+    EthernautaAudioProcessor proc;
+    CHECK(ep::kTotalParams == 50);
+    CHECK(proc.getParameters().size() == 50);
+
+    for (int v = 0; v < ep::kNumVoices; ++v) {
+        INFO("voice " << v + 1);
+        const auto& snap = param(proc, voiceId(v, "snap"));
+        CHECK(snap.getNormalisableRange().start == 0.0f);
+        CHECK(snap.getNormalisableRange().end == 1.0f);
+        CHECK(snap.convertFrom0to1(snap.getDefaultValue()) == Catch::Approx(1.0f));
+        CHECK(raw(proc, voiceId(v, "snap")) == Catch::Approx(1.0f));
+        CHECK(snap.getText(snap.convertTo0to1(0.5f), 32) == "50");
+        CHECK(snap.getLabel() == "%");
+    }
+
+    const auto& hyst = param(proc, "snap_hysteresis");
+    CHECK(hyst.getNormalisableRange().start == 0.0f);
+    CHECK(hyst.getNormalisableRange().end == 50.0f);
+    CHECK(hyst.convertFrom0to1(hyst.getDefaultValue())
+          == Catch::Approx(static_cast<float>(ethernauta::kDefaultSnapHysteresisCents)));
+    CHECK(raw(proc, "snap_hysteresis") == Catch::Approx(3.0f));
+    CHECK(hyst.getLabel() == "cents");
 }
 
 TEST_CASE("Voice 1 parameters keep their shipped ranges and defaults", "[plugin][params]")

@@ -33,11 +33,23 @@ inline std::vector<std::string> expectedTuningIds(int numVoices)
     return ids;
 }
 
+// Parameters added with the snap controls (state schema 3): one strength per voice, then the global
+// hysteresis, appended after "root".
+inline std::vector<std::string> expectedSnapIds(int numVoices)
+{
+    std::vector<std::string> ids;
+    for (int v = 1; v <= numVoices; ++v) ids.push_back("v" + std::to_string(v) + "_snap");
+    ids.push_back("snap_hysteresis");
+    return ids;
+}
+
 inline std::vector<std::string> allExpectedIds(int numVoices)
 {
     auto ids = expectedIds(numVoices);
-    const auto extra = expectedTuningIds(numVoices);
-    ids.insert(ids.end(), extra.begin(), extra.end());
+    const auto tuning = expectedTuningIds(numVoices);
+    ids.insert(ids.end(), tuning.begin(), tuning.end());
+    const auto snap = expectedSnapIds(numVoices);
+    ids.insert(ids.end(), snap.begin(), snap.end());
     return ids;
 }
 

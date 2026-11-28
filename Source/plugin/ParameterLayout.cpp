@@ -1,5 +1,6 @@
 #include "ParameterLayout.h"
 
+#include <ethernauta/JustSnap.h>
 #include <ethernauta/TuningEngine.h>
 #include <ethernauta/VoiceParams.h>
 
@@ -18,6 +19,7 @@ std::string parameterId(int voiceIndex, VoiceParam which)
         case VoiceParam::Tuning: suffix = "tuning"; break;
         case VoiceParam::Degree: suffix = "degree"; break;
         case VoiceParam::Octave: suffix = "octave"; break;
+        case VoiceParam::Snap: suffix = "snap"; break;
     }
     return "v" + std::to_string(voiceIndex + 1) + "_" + suffix;
 }
@@ -99,6 +101,28 @@ void addVoiceTuningParameters(juce::AudioProcessorValueTreeState::ParameterLayou
         voiceName + " Octave", kMinOctaveOffset, kMaxOctaveOffset, 0));
 }
 
+void addSnapParameters(juce::AudioProcessorValueTreeState::ParameterLayout& layout)
+{
+    // Strength is stored as a 0..1 fraction (the core's snapStrength) and shown as a percentage.
+    for (int voiceIndex = 0; voiceIndex < kNumVoices; ++voiceIndex) {
+        layout.add(std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{parameterId(voiceIndex, VoiceParam::Snap), kSnapParameterVersion},
+            "Voice " + juce::String(voiceIndex + 1) + " Snap", juce::NormalisableRange<float>(0.0f, 1.0f, 0.01f),
+            static_cast<float>(VoiceTuning{}.snapStrength),
+            juce::AudioParameterFloatAttributes()
+                .withLabel("%")
+                .withStringFromValueFunction([](float v, int) { return juce::String(juce::roundToInt(v * 100.0f)); })
+                .withValueFromStringFunction([](const juce::String& text) { return text.getFloatValue() / 100.0f; })));
+    }
+
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID{kSnapHysteresisParamId, kSnapParameterVersion}, "Snap Hysteresis",
+        juce::NormalisableRange<float>(0.0f, kSnapHysteresisMaxCents, 0.1f),
+        static_cast<float>(kDefaultSnapHysteresisCents),
+        juce::AudioParameterFloatAttributes().withLabel("cents").withStringFromValueFunction(
+            [](float v, int) { return juce::String(v, 1); })));
+}
+
 juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
 {
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
@@ -108,6 +132,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
     for (int voice = 0; voice < kNumVoices; ++voice)
         addVoiceTuningParameters(layout, voice);
     addGlobalParameters(layout);
+    addSnapParameters(layout);
     return layout;
 }
 

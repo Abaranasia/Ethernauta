@@ -5,8 +5,13 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/catch_test_macros.hpp>
 
+#include <atomic>
+#include <chrono>
+#include <cstdint>
 #include <cmath>
+#include <initializer_list>
 #include <limits>
+#include <thread>
 #include <vector>
 
 namespace et = ethernauta;
@@ -424,4 +429,117 @@ TEST_CASE("Engine: 12-TET hold/switch uses a fixed 3-cent margin, Just uses snap
     };
     CHECK(runJust(0.0) == Approx(et::kJustTable[3].cents).margin(1e-9));
     CHECK(runJust(50.0) == Approx(et::kJustTable[2].cents).margin(1e-9));
+}
+
+// --- Candidate-set handoff (message thread publishes, audio thread adopts) -------------------------
+
+namespace {
+et::SnapCandidates customSet(std::initializer_list<double> cents)
+{
+    std::vector<double> v(cents);
+    et::SnapCandidates c;
+    c.set(v.data(), static_cast<int>(v.size()));
+    return c;
+}
+} // namespace
+
+TEST_CASE("Engine: a published set is in effect at the next targetHz call", "[snap][engine][handoff]")
+{
+    et::TuningEngine e;
+    e.setSnapCandidates(customSet({0.0, 350.0, 700.0}));
+    CHECK(centsAbove(e, e.targetHz(0, justTuning(1.0), above(e, 330.0))) == Approx(350.0).margin(1e-9));
+}
+
+TEST_CASE("Engine: a published set resets snap memory exactly once across voices", "[snap][engine][handoff]")
+{
+    et::TuningEngine e;
+    // Both voices settle on the old set's key 0.
+    e.targetHz(0, justTuning(1.0, 1000.0), above(e, 1.0));
+    e.targetHz(1, justTuning(1.0, 1000.0), above(e, 1.0));
+    e.setSnapCandidates(customSet({0.0, 100.0, 200.0}));
+    // Voice 0's call adopts the set and clears memory, then settles on key 0 of the new set.
+    CHECK(centsAbove(e, e.targetHz(0, justTuning(1.0, 1000.0), above(e, 1.0))) == Approx(0.0).margin(1e-9));
+    // Voice 1's call must not clear voice 0's fresh memory again, nor re-clear its own after settling.
+    CHECK(centsAbove(e, e.targetHz(1, justTuning(1.0, 1000.0), above(e, 1.0))) == Approx(0.0).margin(1e-9));
+    CHECK(centsAbove(e, e.targetHz(0, justTuning(1.0, 1000.0), above(e, 180.0))) == Approx(0.0).margin(1e-9));
+    CHECK(centsAbove(e, e.targetHz(1, justTuning(1.0, 1000.0), above(e, 180.0))) == Approx(0.0).margin(1e-9));
+}
+
+TEST_CASE("Engine: publishing twice before the audio side runs adopts only the latest", "[snap][engine][handoff]")
+{
+    et::TuningEngine e;
+    e.setSnapCandidates(customSet({0.0, 100.0, 200.0})); // superseded before it is ever used
+    e.setSnapCandidates(customSet({0.0, 500.0}));
+    // 180 cents is nearest to 200 in the superseded set but to 0 in the latest one.
+    CHECK(centsAbove(e, e.targetHz(0, justTuning(1.0, 0.0), above(e, 180.0))) == Approx(0.0).margin(1e-9));
+    CHECK(e.snapCandidates().size() == 2);
+}
+
+TEST_CASE("Engine: publishing the same size set twice still drops the memory of the first", "[snap][engine][handoff]")
+{
+    et::TuningEngine e;
+    e.targetHz(0, justTuning(1.0, 1000.0), above(e, 1.0)); // key 0 held
+    e.setSnapCandidates(customSet({0.0, 100.0, 200.0}));
+    e.setSnapCandidates(customSet({0.0, 100.0, 200.0}));
+    CHECK(centsAbove(e, e.targetHz(0, justTuning(1.0, 1000.0), above(e, 180.0))) == Approx(200.0).margin(1e-9));
+}
+
+TEST_CASE("Engine: concurrent publishing never exposes a torn candidate set", "[snap][engine][handoff][threads]")
+{
+    // The sets differ in size (including empty), so a torn copy shows up as a size/array mismatch,
+    // a divide by zero, or a frequency that belongs to no published set.
+    const et::SnapCandidates sets[] = {customSet({350.0}), justScale(), customSet({0, 200, 400, 500, 650, 900, 1100}),
+                                       et::SnapCandidates{}};
+    constexpr int kSets = 4;
+    const et::VoiceTuning tuning = justTuning(1.0, 0.0);
+    std::vector<double> valid;
+    for (const auto& s : sets) {
+        et::TuningEngine ref;
+        ref.setSnapCandidates(s);
+        valid.push_back(ref.targetHz(0, tuning, above(ref, 700.0)));
+    }
+
+    for (int a = 0; a < kSets; ++a)
+        for (int b = a + 1; b < kSets; ++b) REQUIRE(valid[a] != valid[b]);
+
+    et::TuningEngine e; // same default root as `ref`
+    const double input = above(e, 700.0);
+    std::atomic<bool> go{false};
+    std::atomic<bool> stop{false};
+    long long published = 0;
+    std::thread writer([&] {
+        while (!go.load(std::memory_order_acquire)) std::this_thread::yield();
+        // A pseudo-random order: a fixed cycle can alias with the reader's pace and hide some sets.
+        std::uint32_t rng = 12345u;
+        while (!stop.load(std::memory_order_relaxed)) {
+            rng = rng * 1664525u + 1013904223u;
+            e.setSnapCandidates(sets[(rng >> 16) % kSets]);
+            ++published;
+        }
+    });
+
+    long long iterations = 0;
+    long long bad = 0;
+    bool seen[kSets] = {};
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+    go.store(true, std::memory_order_release);
+    for (;;) {
+        for (int k = 0; k < 256; ++k) {
+            const double hz = e.targetHz(0, tuning, input);
+            int match = -1;
+            for (int s = 0; s < kSets; ++s)
+                if (hz == valid[s]) match = s;
+            if (!std::isfinite(hz) || match < 0) ++bad;
+            else seen[match] = true;
+        }
+        iterations += 256;
+        const bool seenAll = seen[0] && seen[1] && seen[2] && seen[3];
+        if ((iterations >= 200000 && seenAll) || std::chrono::steady_clock::now() > deadline) break;
+    }
+    stop.store(true, std::memory_order_relaxed);
+    writer.join();
+
+    CHECK(bad == 0);
+    CHECK(published > 0);
+    for (int s = 0; s < kSets; ++s) CHECK(seen[s]);
 }

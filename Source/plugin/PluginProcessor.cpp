@@ -26,8 +26,10 @@ EthernautaAudioProcessor::EthernautaAudioProcessor()
         p.tuning = apvts_.getRawParameterValue(parameterId(i, VoiceParam::Tuning));
         p.degree = apvts_.getRawParameterValue(parameterId(i, VoiceParam::Degree));
         p.octave = apvts_.getRawParameterValue(parameterId(i, VoiceParam::Octave));
+        p.snap = apvts_.getRawParameterValue(parameterId(i, VoiceParam::Snap));
     }
     root_ = apvts_.getRawParameterValue(ethernauta::plugin::kRootParamId);
+    snapHysteresis_ = apvts_.getRawParameterValue(ethernauta::plugin::kSnapHysteresisParamId);
     apvts_.state.setProperty(kSchemaVersionKey, ethernauta::plugin::kStateSchemaVersion, nullptr);
 }
 
@@ -57,6 +59,7 @@ void EthernautaAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, ju
     // Voices render additively into channel 0, which is mirrored to the other channels afterwards.
     // Every voice is tuned from the one shared root; the voice glides to the resulting frequency.
     tuner_.setRoot(static_cast<double>(root_->load(std::memory_order_relaxed)));
+    const double snapHysteresis = static_cast<double>(snapHysteresis_->load(std::memory_order_relaxed));
     float* left = buffer.getWritePointer(0);
     for (std::size_t i = 0; i < voices_.size(); ++i) {
         const auto& p = params_[i];
@@ -65,6 +68,8 @@ void EthernautaAudioProcessor::processBlock(juce::AudioBuffer<float>& buffer, ju
             static_cast<int>(std::lround(p.tuning->load(std::memory_order_relaxed))), 0, ethernauta::kNumTuningModes - 1));
         vt.degree = static_cast<int>(std::lround(p.degree->load(std::memory_order_relaxed)));
         vt.octave = static_cast<int>(std::lround(p.octave->load(std::memory_order_relaxed)));
+        vt.snapStrength = static_cast<double>(p.snap->load(std::memory_order_relaxed));
+        vt.snapHysteresisCents = snapHysteresis;
         const double freeHz = ethernauta::pitchToHz(p.pitch->load(std::memory_order_relaxed), 0.0f);
 
         auto& voice = voices_[i];
@@ -105,6 +110,9 @@ void EthernautaAudioProcessor::setStateInformation(const void* data, int sizeInB
     // tuning, i.e. the pre-tuning behaviour). Newer versions are loaded best-effort: unknown
     // properties are ignored by the APVTS.
     if (savedVersion < 2) resetTuningParametersToDefaults();
+    // Schema 3 added the snap controls: an older preset has none, so they take their defaults
+    // (full snap, default hysteresis), which is exactly the behaviour before they existed.
+    if (savedVersion < 3) resetSnapParametersToDefaults();
     apvts_.state.setProperty(kSchemaVersionKey, ethernauta::plugin::kStateSchemaVersion, nullptr);
 }
 
@@ -119,6 +127,17 @@ void EthernautaAudioProcessor::resetTuningParametersToDefaults()
     for (int i = 0; i < ethernauta::plugin::kNumVoices; ++i)
         for (const auto which : {VoiceParam::Tuning, VoiceParam::Degree, VoiceParam::Octave})
             reset(parameterId(i, which));
+}
+
+void EthernautaAudioProcessor::resetSnapParametersToDefaults()
+{
+    using ethernauta::plugin::parameterId;
+    using ethernauta::plugin::VoiceParam;
+    auto reset = [this](const std::string& id) {
+        if (auto* p = apvts_.getParameter(id)) p->setValueNotifyingHost(p->getDefaultValue());
+    };
+    reset(ethernauta::plugin::kSnapHysteresisParamId);
+    for (int i = 0; i < ethernauta::plugin::kNumVoices; ++i) reset(parameterId(i, VoiceParam::Snap));
 }
 
 juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()

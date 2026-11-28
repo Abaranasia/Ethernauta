@@ -26,9 +26,12 @@ private:
 
     juce::Label rootLabel_;
     juce::Slider root_{juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight};
+    juce::Label snapHysteresisLabel_;
+    juce::Slider snapHysteresis_{juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight};
 
     std::array<std::unique_ptr<VoicePanel>, kNumPanels> panels_;
     std::unique_ptr<SliderAttachment> rootAttachment_; // after the slider it points at
+    std::unique_ptr<SliderAttachment> snapHysteresisAttachment_;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(EthernautaEditor)
 };

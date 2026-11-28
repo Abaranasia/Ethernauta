@@ -24,6 +24,9 @@ private:
     juce::ComboBox degree_;
     juce::Slider octave_{juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight};
     juce::Label octaveLabel_;
+    // How strongly Just mode pulls the pitch onto the grid (0 = own pitch, 100 % = fully snapped).
+    juce::Slider snap_{juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight};
+    juce::Label snapLabel_;
     juce::Slider gain_{juce::Slider::LinearVertical, juce::Slider::TextBoxBelow};
     juce::Slider pitch_{juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow};
     juce::Label gainLabel_;
@@ -35,6 +38,7 @@ private:
     std::unique_ptr<ComboAttachment> tuningAttachment_;
     std::unique_ptr<ComboAttachment> degreeAttachment_;
     std::unique_ptr<SliderAttachment> octaveAttachment_;
+    std::unique_ptr<SliderAttachment> snapAttachment_;
     std::unique_ptr<SliderAttachment> gainAttachment_;
     std::unique_ptr<SliderAttachment> pitchAttachment_;
 
