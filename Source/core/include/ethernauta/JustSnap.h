@@ -5,6 +5,10 @@ namespace ethernauta {
 
 inline constexpr double kDefaultSnapHysteresisCents = 3.0;
 
+// Cents beyond this magnitude (about 83 million octaves) are clamped before grid search so the
+// double -> long long conversions can never overflow. Far outside any audible or parameter range.
+inline constexpr double kMaxSnapCents = 1.0e9;
+
 // Octave-reduced snap candidates, in cents above the shared root. Fixed capacity, so configuring and
 // querying never allocate. The set repeats every octave: grid points are numbered along an endless
 // ladder, key = octave * size() + index, so the neighbours across an octave boundary
