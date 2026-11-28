@@ -18,6 +18,12 @@ private:
     juce::Label title_;
     juce::ComboBox waveform_;
     juce::ToggleButton latch_{"Latch"};
+    // Tuning: mode and degree are choice parameters, the octave an integer slider. The pitch dial stays
+    // enabled in every mode: Free, 12-TET and Just use it as the value to tune; only Degree ignores it.
+    juce::ComboBox tuning_;
+    juce::ComboBox degree_;
+    juce::Slider octave_{juce::Slider::LinearHorizontal, juce::Slider::TextBoxRight};
+    juce::Label octaveLabel_;
     juce::Slider gain_{juce::Slider::LinearVertical, juce::Slider::TextBoxBelow};
     juce::Slider pitch_{juce::Slider::RotaryHorizontalVerticalDrag, juce::Slider::TextBoxBelow};
     juce::Label gainLabel_;
@@ -26,6 +32,9 @@ private:
     // Declared last: attachments must be destroyed before the controls they point at.
     std::unique_ptr<ComboAttachment> waveformAttachment_;
     std::unique_ptr<ButtonAttachment> latchAttachment_;
+    std::unique_ptr<ComboAttachment> tuningAttachment_;
+    std::unique_ptr<ComboAttachment> degreeAttachment_;
+    std::unique_ptr<SliderAttachment> octaveAttachment_;
     std::unique_ptr<SliderAttachment> gainAttachment_;
     std::unique_ptr<SliderAttachment> pitchAttachment_;
 

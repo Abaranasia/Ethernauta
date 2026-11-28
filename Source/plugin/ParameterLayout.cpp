@@ -1,5 +1,6 @@
 #include "ParameterLayout.h"
 
+#include <ethernauta/TuningEngine.h>
 #include <ethernauta/VoiceParams.h>
 
 #include <memory>
@@ -14,11 +15,31 @@ std::string parameterId(int voiceIndex, VoiceParam which)
         case VoiceParam::Latch: suffix = "latch"; break;
         case VoiceParam::Gain: suffix = "gain"; break;
         case VoiceParam::Pitch: suffix = "pitch"; break;
+        case VoiceParam::Tuning: suffix = "tuning"; break;
+        case VoiceParam::Degree: suffix = "degree"; break;
+        case VoiceParam::Octave: suffix = "octave"; break;
     }
     return "v" + std::to_string(voiceIndex + 1) + "_" + suffix;
 }
 
-void addVoiceParameters(juce::AudioProcessorValueTreeState::ParameterLayout& layout, int voiceIndex)
+namespace {
+juce::String noteText(float v)
+{
+    // Number first so the default text-entry parser (leading number) round-trips.
+    return juce::String(v, 2) + " (" + juce::MidiMessage::getMidiNoteName(juce::roundToInt(v), true, true, 4) + ")";
+}
+} // namespace
+
+void addGlobalParameters(juce::AudioProcessorValueTreeState::ParameterLayout& layout)
+{
+    layout.add(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID{kRootParamId, kTuningParameterVersion}, "Root",
+        juce::NormalisableRange<float>(kPitchMinNote, kPitchMaxNote, 1.0f), kRootDefaultNote,
+        juce::AudioParameterFloatAttributes().withLabel("note").withStringFromValueFunction(
+            [](float v, int) { return noteText(v); })));
+}
+
+void addVoiceBaseParameters(juce::AudioProcessorValueTreeState::ParameterLayout& layout, int voiceIndex)
 {
     const juce::String voiceName = "Voice " + juce::String(voiceIndex + 1);
 
@@ -51,17 +72,42 @@ void addVoiceParameters(juce::AudioProcessorValueTreeState::ParameterLayout& lay
         juce::AudioParameterFloatAttributes()
             .withLabel("note")
             .withStringFromValueFunction([](float v, int) {
-                // Number first so the default text-entry parser (leading number) round-trips.
-                return juce::String(v, 2) + " ("
-                       + juce::MidiMessage::getMidiNoteName(juce::roundToInt(v), true, true, 4) + ")";
+                return noteText(v);
             })));
+}
+
+void addVoiceTuningParameters(juce::AudioProcessorValueTreeState::ParameterLayout& layout, int voiceIndex)
+{
+    const juce::String voiceName = "Voice " + juce::String(voiceIndex + 1);
+
+    // Tuning: Free keeps the pitch parameter as it is (the default, so old behaviour is unchanged).
+    layout.add(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID{parameterId(voiceIndex, VoiceParam::Tuning), kTuningParameterVersion},
+        voiceName + " Tuning", juce::StringArray{"Free", "12-TET", "Just", "Degree"}, 0));
+
+    juce::StringArray degrees;
+    for (int i = 0; i < kNumJustDegrees; ++i) {
+        const auto& d = kJustTable[i];
+        degrees.add(juce::String(d.num) + "/" + juce::String(d.den) + " " + d.name);
+    }
+    layout.add(std::make_unique<juce::AudioParameterChoice>(
+        juce::ParameterID{parameterId(voiceIndex, VoiceParam::Degree), kTuningParameterVersion},
+        voiceName + " Degree", degrees, 0));
+
+    layout.add(std::make_unique<juce::AudioParameterInt>(
+        juce::ParameterID{parameterId(voiceIndex, VoiceParam::Octave), kTuningParameterVersion},
+        voiceName + " Octave", kMinOctaveOffset, kMaxOctaveOffset, 0));
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
 {
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
+    // Append-only order (see ParameterLayout.h): hosts may automate by index.
     for (int voice = 0; voice < kNumVoices; ++voice)
-        addVoiceParameters(layout, voice);
+        addVoiceBaseParameters(layout, voice);
+    for (int voice = 0; voice < kNumVoices; ++voice)
+        addVoiceTuningParameters(layout, voice);
+    addGlobalParameters(layout);
     return layout;
 }
 

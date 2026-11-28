@@ -17,7 +17,7 @@ juce::MemoryBlock saveState(EthernautaAudioProcessor& p)
 void expectAllDefaults(EthernautaAudioProcessor& p)
 {
     EthernautaAudioProcessor fresh;
-    for (const auto& id : expectedIds(ep::kNumVoices)) {
+    for (const auto& id : allExpectedIds(ep::kNumVoices)) {
         INFO(id);
         CHECK(raw(p, id) == raw(fresh, id));
     }
@@ -33,9 +33,13 @@ TEST_CASE("State round-trips every parameter of every voice", "[plugin][state]")
         setPlain(a, voiceId(v, "latch"), v % 2 == 0 ? 1.0f : 0.0f);
         setPlain(a, voiceId(v, "gain"), -3.5f - 4.0f * static_cast<float>(v));
         setPlain(a, voiceId(v, "pitch"), 50.25f + 3.0f * static_cast<float>(v));
+        setPlain(a, voiceId(v, "tuning"), static_cast<float>(v % 3 + 1));
+        setPlain(a, voiceId(v, "degree"), static_cast<float>(3 + 5 * v));
+        setPlain(a, voiceId(v, "octave"), static_cast<float>(v % 7 - 3 == 0 ? 2 : v % 7 - 3));
     }
+    setPlain(a, "root", 52.0f);
     // The test must not pass vacuously: the non-default values really are in place.
-    for (const auto& id : expectedIds(ep::kNumVoices)) {
+    for (const auto& id : allExpectedIds(ep::kNumVoices)) {
         INFO(id);
         if (id.find("_latch") != std::string::npos && raw(a, id) == 0.0f) continue; // odd voices stay off
         CHECK(raw(a, id) != raw(defaults, id));
@@ -46,7 +50,7 @@ TEST_CASE("State round-trips every parameter of every voice", "[plugin][state]")
 
     EthernautaAudioProcessor b;
     b.setStateInformation(saved.getData(), static_cast<int>(saved.getSize()));
-    for (const auto& id : expectedIds(ep::kNumVoices)) {
+    for (const auto& id : allExpectedIds(ep::kNumVoices)) {
         INFO(id);
         CHECK(raw(b, id) == raw(a, id));
     }
@@ -83,6 +87,58 @@ TEST_CASE("Older and newer schema versions load without losing parameters", "[pl
         CHECK(static_cast<int>(b.getValueTreeState().state.getProperty("schemaVersion", -1))
               == ep::kStateSchemaVersion);
     }
+}
+
+TEST_CASE("State saved by schema 1 (before the tuning engine) loads with tuning defaults", "[plugin][state][migration]")
+{
+    // Build the XML exactly as schema 1 wrote it: version 1 and only the four per-voice parameters.
+    juce::XmlElement xml("EthernautaState");
+    xml.setAttribute("schemaVersion", 1);
+    auto add = [&xml](const std::string& id, double value) {
+        auto* e = xml.createNewChildElement("PARAM");
+        e->setAttribute("id", juce::String(id));
+        e->setAttribute("value", value);
+    };
+    for (int v = 0; v < ep::kNumVoices; ++v) {
+        add(voiceId(v, "wave"), 2.0);
+        add(voiceId(v, "latch"), v % 2 == 0 ? 1.0 : 0.0);
+        add(voiceId(v, "gain"), -9.0 - v);
+        add(voiceId(v, "pitch"), 40.0 + v);
+    }
+    juce::MemoryBlock blob;
+    juce::AudioProcessor::copyXmlToBinary(xml, blob);
+
+    // The target processor already has non-default tuning, which an old preset must reset.
+    EthernautaAudioProcessor p;
+    setPlain(p, "root", 60.0f);
+    for (int v = 0; v < ep::kNumVoices; ++v) {
+        setPlain(p, voiceId(v, "tuning"), 2.0f);
+        setPlain(p, voiceId(v, "degree"), 10.0f);
+        setPlain(p, voiceId(v, "octave"), 2.0f);
+    }
+    p.setStateInformation(blob.getData(), static_cast<int>(blob.getSize()));
+
+    EthernautaAudioProcessor defaults;
+    for (const auto& id : expectedTuningIds(ep::kNumVoices)) {
+        INFO(id);
+        CHECK(raw(p, id) == raw(defaults, id));
+    }
+    for (int v = 0; v < ep::kNumVoices; ++v) {
+        INFO("voice " << v + 1);
+        CHECK(raw(p, voiceId(v, "wave")) == 2.0f);
+        CHECK(raw(p, voiceId(v, "latch")) == (v % 2 == 0 ? 1.0f : 0.0f));
+        CHECK(raw(p, voiceId(v, "gain")) == Catch::Approx(-9.0f - static_cast<float>(v)));
+        CHECK(raw(p, voiceId(v, "pitch")) == Catch::Approx(40.0f + static_cast<float>(v)));
+    }
+    CHECK(static_cast<int>(p.getValueTreeState().state.getProperty("schemaVersion", -1)) == ep::kStateSchemaVersion);
+    CHECK(ep::kStateSchemaVersion == 2);
+
+    // Re-saving writes the new schema.
+    juce::MemoryBlock again;
+    p.getStateInformation(again);
+    const auto saved = juce::AudioProcessor::getXmlFromBinary(again.getData(), static_cast<int>(again.getSize()));
+    REQUIRE(saved != nullptr);
+    CHECK(saved->getIntAttribute("schemaVersion", -1) == 2);
 }
 
 TEST_CASE("Empty, null and malformed state leaves defaults untouched", "[plugin][state]")
@@ -150,7 +206,7 @@ TEST_CASE("Right tag with unknown and out-of-range parameters is handled safely"
     CHECK(raw(p, "v2_pitch") >= ep::kPitchMinNote);
     CHECK(raw(p, "v3_wave") >= 0.0f);
     CHECK(raw(p, "v3_wave") <= static_cast<float>(ethernauta::kNumWaveforms - 1));
-    CHECK(p.getParameters().size() == ep::kNumVoices * 4);
+    CHECK(p.getParameters().size() == ep::kTotalParams);
 
     // And the processor still renders finite audio afterwards.
     prepare(p, 48000.0, 512);

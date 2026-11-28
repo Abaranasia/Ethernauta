@@ -2,10 +2,13 @@
 #include <catch2/catch_test_macros.hpp>
 
 #include "PluginTestUtils.h"
+#include "VoicePanel.h"
 
+#include <ethernauta/Tuning.h>
 #include <ethernauta/VoiceParams.h>
 
 #include <set>
+#include <string>
 
 using namespace plugintest;
 namespace ep = ethernauta::plugin;
@@ -14,14 +17,40 @@ TEST_CASE("Plugin exposes six voices through one constant", "[plugin][params]")
 {
     CHECK(ep::kNumVoices == 6);
     EthernautaAudioProcessor proc;
-    CHECK(proc.getParameters().size() == ep::kNumVoices * 4);
+    CHECK(proc.getParameters().size() == ep::kTotalParams);
+}
+
+TEST_CASE("Parameter order is append-only so index-based host automation survives updates",
+          "[plugin][params][order]")
+{
+    EthernautaAudioProcessor proc;
+    const auto& params = proc.getParameters();
+    REQUIRE(params.size() == ep::kTotalParams);
+
+    std::vector<std::string> expected;
+    // Original layout (commit 27aa24c): wave, latch, gain, pitch for each voice in turn.
+    for (int v = 0; v < ep::kNumVoices; ++v)
+        for (const char* suffix : {"wave", "latch", "gain", "pitch"}) expected.push_back(voiceId(v, suffix));
+    REQUIRE(static_cast<int>(expected.size()) == ep::kNumVoices * ep::kNumBaseVoiceParams);
+    // Then the tuning parameters of every voice, then the globals.
+    for (int v = 0; v < ep::kNumVoices; ++v)
+        for (const char* suffix : {"tuning", "degree", "octave"}) expected.push_back(voiceId(v, suffix));
+    expected.push_back(ep::kRootParamId);
+    REQUIRE(expected.size() == static_cast<std::size_t>(ep::kTotalParams));
+
+    for (int i = 0; i < params.size(); ++i) {
+        const auto* withId = dynamic_cast<juce::HostedAudioProcessorParameter*>(params[i]);
+        REQUIRE(withId != nullptr);
+        INFO("index " << i);
+        CHECK(withId->getParameterID().toStdString() == expected[static_cast<std::size_t>(i)]);
+    }
 }
 
 TEST_CASE("Every voice has its stable parameter IDs", "[plugin][params]")
 {
     EthernautaAudioProcessor proc;
-    const auto ids = expectedIds(6);
-    REQUIRE(ids.size() == 24);
+    const auto ids = allExpectedIds(ep::kNumVoices);
+    REQUIRE(ids.size() == static_cast<std::size_t>(ep::kTotalParams));
     for (const auto& id : ids) {
         INFO(id);
         CHECK(proc.getValueTreeState().getParameter(id) != nullptr);
@@ -34,11 +63,50 @@ TEST_CASE("Every voice has its stable parameter IDs", "[plugin][params]")
         CHECK(expected.count(withId->getParameterID().toStdString()) == 1);
     }
     // The builder agrees with the literal contract.
-    for (int v = 0; v < 6; ++v) {
+    for (int v = 0; v < ep::kNumVoices; ++v) {
         CHECK(ep::parameterId(v, ep::VoiceParam::Wave) == voiceId(v, "wave"));
         CHECK(ep::parameterId(v, ep::VoiceParam::Latch) == voiceId(v, "latch"));
         CHECK(ep::parameterId(v, ep::VoiceParam::Gain) == voiceId(v, "gain"));
         CHECK(ep::parameterId(v, ep::VoiceParam::Pitch) == voiceId(v, "pitch"));
+        CHECK(ep::parameterId(v, ep::VoiceParam::Tuning) == voiceId(v, "tuning"));
+        CHECK(ep::parameterId(v, ep::VoiceParam::Degree) == voiceId(v, "degree"));
+        CHECK(ep::parameterId(v, ep::VoiceParam::Octave) == voiceId(v, "octave"));
+    }
+    CHECK(std::string(ep::kRootParamId) == "root");
+}
+
+TEST_CASE("Tuning parameters expose the documented ranges and defaults", "[plugin][params][tuning]")
+{
+    EthernautaAudioProcessor proc;
+
+    const auto& root = param(proc, "root");
+    CHECK(root.getNormalisableRange().start == ep::kPitchMinNote);
+    CHECK(root.getNormalisableRange().end == ep::kPitchMaxNote);
+    CHECK(root.getNormalisableRange().start == 12.0f);
+    CHECK(root.getNormalisableRange().end == 96.0f);
+    CHECK(root.convertFrom0to1(root.getDefaultValue()) == Catch::Approx(45.0f));
+    CHECK(raw(proc, "root") == Catch::Approx(45.0f));
+
+    for (int v = 0; v < ep::kNumVoices; ++v) {
+        INFO("voice " << v + 1);
+        const auto& tuning = param(proc, voiceId(v, "tuning"));
+        CHECK(tuning.getNumSteps() == 4);
+        CHECK(tuning.convertFrom0to1(tuning.getDefaultValue()) == 0.0f); // Free
+        CHECK(raw(proc, voiceId(v, "tuning")) == 0.0f);
+        CHECK(tuning.getText(tuning.convertTo0to1(0.0f), 32) == "Free");
+        CHECK(tuning.getText(tuning.convertTo0to1(1.0f), 32) == "12-TET");
+        CHECK(tuning.getText(tuning.convertTo0to1(2.0f), 32) == "Just");
+        CHECK(tuning.getText(tuning.convertTo0to1(3.0f), 32) == "Degree");
+
+        const auto& degree = param(proc, voiceId(v, "degree"));
+        CHECK(degree.getNumSteps() == ethernauta::kNumJustDegrees);
+        CHECK(degree.convertFrom0to1(degree.getDefaultValue()) == 0.0f); // 1/1
+        CHECK(degree.getText(degree.getDefaultValue(), 32).startsWith("1/1"));
+
+        const auto& octave = param(proc, voiceId(v, "octave"));
+        CHECK(octave.getNormalisableRange().start == -3.0f);
+        CHECK(octave.getNormalisableRange().end == 3.0f);
+        CHECK(octave.convertFrom0to1(octave.getDefaultValue()) == 0.0f);
     }
 }
 
@@ -120,5 +188,8 @@ TEST_CASE("Editor can be created at a fixed size", "[plugin][editor]")
     CHECK(editor->getWidth() >= 6 * 140);
     CHECK(editor->getHeight() > 200);
     // One panel per voice, laid out left to right.
-    CHECK(editor->getNumChildComponents() == ep::kNumVoices);
+    int panels = 0;
+    for (auto* child : editor->getChildren())
+        if (dynamic_cast<VoicePanel*>(child) != nullptr) ++panels;
+    CHECK(panels == ep::kNumVoices);
 }
