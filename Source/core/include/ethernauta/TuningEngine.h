@@ -2,6 +2,8 @@
 #include <ethernauta/JustSnap.h>
 #include <ethernauta/Tuning.h>
 
+#include <atomic>
+
 namespace ethernauta {
 
 // Order matches the plugin's "v{n}_tuning" choice indices; do not reorder.
@@ -23,7 +25,8 @@ struct VoiceTuning {
 };
 
 // Computes each voice's target frequency from ONE shared root, never neighbour to neighbour, so
-// intervals cannot accumulate comma drift. Allocation-free; call from the audio thread only.
+// intervals cannot accumulate comma drift. Allocation-free; call from the audio thread only
+// (setSnapCandidates() is the one exception: message thread, see below).
 //
 //   Free           the voice's own frequency, unchanged
 //   EqualTempered  nearest 12-TET semitone relative to the root, octave kept
@@ -42,14 +45,20 @@ public:
     void reset() noexcept;
     // Root as a MIDI note plus cents (pitchToHz conventions). Non-finite input is replaced by A2.
     void setRoot(double midiNote, double cents = 0.0) noexcept;
-    // Replaces the Just-mode candidate set (default: the just scale). Not for the audio thread
-    // unless the caller synchronises; the copy is fixed-size and allocation-free.
-    void setSnapCandidates(const SnapCandidates& candidates) noexcept
-    {
-        candidates_ = candidates;
-        for (auto& m : memory_) m = Memory{}; // old keys name different grid points under the new set
-    }
-    const SnapCandidates& snapCandidates() const noexcept { return candidates_; }
+    // Publishes the Just-mode candidate set (default: the just scale). Wait-free, allocation-free.
+    //
+    // Thread contract (exactly one thread in each role):
+    //   message thread  setSnapCandidates()                         (single writer)
+    //   audio thread    targetHz(), reset(), snapCandidates()       (single reader; owns memory_)
+    // setRoot() and rootHz() are plain, unsynchronised state and stay audio-thread (or pre-start) only.
+    // The set takes effect at the audio thread's next targetHz()/reset() call: that call adopts the
+    // latest published set and clears every voice's snap memory, once per adopted set (sets published
+    // twice before the audio thread runs are coalesced, only the last is adopted). The setter never
+    // touches memory_. With a single thread doing both, "set, then next targetHz()" behaves as before.
+    void setSnapCandidates(const SnapCandidates& candidates) noexcept;
+    // The set the audio thread currently uses (the last adopted one). Audio thread only; it does not
+    // yet reflect a set published but not adopted.
+    const SnapCandidates& snapCandidates() const noexcept { return slots_[readIdx_]; }
     double rootHz() const noexcept { return rootHz_; }
 
     // `freeHz` is the voice's own pitch. The result is always finite and positive.
@@ -61,15 +70,32 @@ private:
         long long key = 0; // grid point index, valid when mode is a snapping mode
     };
 
-    double rootHz_ = 110.0;
-    SnapCandidates candidates_ = defaultCandidates();
+    // Adopts a pending published set, if any, and clears all voice memory. Audio thread only.
+    void adoptPending() noexcept;
+
+    // Triple buffer. Of the three slots, one is owned by the reader (readIdx_), one by the writer
+    // (writeIdx_), and one sits in the mailbox (mailbox_ low bits). Each side writes only to the slot
+    // it owns, so a slot is never read and written at once and no copy is ever torn. Chosen over a
+    // seqlock because the reader must never retry or see a half-written set, and over a mutex or
+    // spinlock because the audio side must stay wait-free; the cost is two spare 530-byte slots.
+    // A set is never copied on the audio thread: adopting is an index swap.
+    static constexpr int kDirty = 4; // mailbox_ flag: the mailbox slot holds an unadopted publication
+    static constexpr int kIdxMask = 3;
+    static_assert(std::atomic<int>::is_always_lock_free, "the handoff must be lock-free");
+
     static SnapCandidates defaultCandidates() noexcept
     {
         SnapCandidates c;
         c.setJustScale();
         return c;
     }
-    Memory memory_[kMaxVoices];
+
+    double rootHz_ = 110.0;
+    SnapCandidates slots_[3] = {defaultCandidates(), defaultCandidates(), defaultCandidates()};
+    int readIdx_ = 0;  // audio thread only
+    int writeIdx_ = 1; // message thread only
+    std::atomic<int> mailbox_{2}; // slot index, plus kDirty when freshly published
+    Memory memory_[kMaxVoices];   // audio thread only
 };
 
 } // namespace ethernauta
